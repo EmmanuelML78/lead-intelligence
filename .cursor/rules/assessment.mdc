@@ -1,0 +1,146 @@
+---
+description: Rules for the Lead Intelligence technical assessment
+alwaysApply: true
+---
+
+# Project Context
+
+This repository implements a technical assessment for an AI Analyst position.
+
+The business problem is lead prioritization for motorcycle dealerships.
+
+The system must:
+
+1. Ingest the supplied CSV and JSON datasets automatically.
+2. Normalize phone numbers, dates, cities, channels, statuses, and motorcycle models.
+3. Detect duplicated customers without losing the original leads.
+4. Extract structured commercial information from WhatsApp conversations using AI.
+5. Calculate an explainable lead priority score.
+6. Use historical closures to validate prioritization decisions.
+7. Persist all processed information in PostgreSQL.
+8. Assign leads to advisors while respecting:
+   - company
+   - sales point
+   - advisor status
+   - daily capacity
+9. Maintain strict company-level data isolation.
+10. Run end-to-end from one command.
+11. Be deployable and demonstrable through a public URL.
+
+# Architecture Principles
+
+Prefer simplicity over unnecessary infrastructure.
+
+Do NOT introduce:
+- microservices
+- Kafka
+- vector databases
+- RAG
+- multi-agent architectures
+unless there is a demonstrated requirement.
+
+Use:
+- Next.js
+- TypeScript
+- Bun
+- PostgreSQL
+- Prisma
+- Zod
+
+# Business Rules
+
+A Customer and a Lead are different entities.
+
+One customer may have multiple leads from different channels.
+
+Never delete duplicated leads.
+Resolve them by associating them with the same Customer.
+
+Never merge customers across companies.
+
+Company isolation is mandatory.
+
+# AI Rules
+
+The LLM must NOT directly generate the final priority score.
+
+AI should extract structured data from conversations.
+
+Expected AI fields:
+
+- motorcycleInterest
+- budget
+- downPayment
+- paymentMethod
+- purchaseIntent
+- mainObjection
+- requestedAppointment
+- requestedQuote
+- confidence
+- evidence
+
+Outputs must be validated with Zod.
+
+# Scoring
+
+The scoring architecture is hybrid.
+
+Priority must combine:
+
+- historical propensity
+- commercial intent
+- operational urgency
+- inventory availability
+
+The score must be explainable.
+
+Store score components separately.
+
+Avoid data leakage.
+
+Never use hours_to_first_contact as a predictive feature for a newly received lead.
+
+Lead age at decision time may be used for operational urgency.
+
+# Data Quality
+
+Do not silently fix uncertain values.
+
+Record data quality issues.
+
+Examples:
+- ambiguous dates
+- missing cities
+- orphan conversations
+- unresolved motorcycle models
+- duplicated IDs
+
+The pipeline should continue processing valid rows when possible.
+
+# Engineering
+
+Code must be:
+- strongly typed
+- modular
+- testable
+- readable
+- explainable during a technical interview
+
+Do not use `any`.
+
+Do not hide complex business logic inside UI components.
+
+Keep normalization, AI extraction, scoring and assignment in separate modules.
+
+# Workflow
+
+Before implementing a large change:
+
+1. inspect the existing repository
+2. explain the proposed changes
+3. identify files that will change
+4. implement
+5. run tests/typecheck
+6. report results
+
+Do not rewrite unrelated working code.

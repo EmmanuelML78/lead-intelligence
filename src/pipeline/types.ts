@@ -34,3 +34,17 @@ export type RawMotorcycle = {
   puntos_venta_disponibles: string;
   unidades_disponibles: string;
 };
+
+export type RawMessage = {
+  emisor: string;
+  hora: string;
+  texto: string;
+};
+
+export type RawConversation = {
+  conversacion_id: string;
+  lead_id: string;
+  canal: string;
+  fecha_inicio: string;
+  mensajes: RawMessage[];
+};

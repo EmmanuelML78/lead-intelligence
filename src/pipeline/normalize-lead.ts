@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
 import { normalizeChannel } from "../lib/normalization/channel";
 import { normalizeCity } from "../lib/normalization/city";
 import { parseMixedDate } from "../lib/normalization/date";
 import { normalizeColombianPhone } from "../lib/normalization/phone";
 import { normalizeLeadStatus } from "../lib/normalization/status";
 import { normalizeWhitespace } from "../lib/normalization/text";
+import { sourceFingerprint } from "./persist/fingerprint";
 import type { RawLead } from "./types";
 
 export function normalizeLead(raw: RawLead) {
@@ -14,9 +14,7 @@ export function normalizeLead(raw: RawLead) {
   const normalizedName = normalizeWhitespace(raw.nombre_cliente);
   const normalizedEmail = normalizeWhitespace(raw.email)?.toLowerCase() ?? null;
 
-  const fingerprint = createHash("sha256")
-    .update(JSON.stringify(raw))
-    .digest("hex");
+  const fingerprint = sourceFingerprint(raw);
 
   return {
     id: raw.lead_id.trim(),

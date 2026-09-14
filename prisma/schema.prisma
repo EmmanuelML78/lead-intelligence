@@ -24,11 +24,20 @@ enum LeadStatus {
   UNKNOWN
 }
 
+// Milestone 2 simplifies the lifecycle to what the assessment asks for:
+// RUNNING -> SUCCESS, or RUNNING -> FAILED. Data-quality problems are
+// recorded as PipelineIssue rows (with a severity) instead of a separate
+// run status, so a run with warnings is still SUCCESS.
 enum PipelineRunStatus {
   RUNNING
-  COMPLETED
-  COMPLETED_WITH_ERRORS
+  SUCCESS
   FAILED
+}
+
+enum PipelineIssueSeverity {
+  INFO
+  WARNING
+  ERROR
 }
 
 enum Temperature {
@@ -48,120 +57,167 @@ model Company {
 }
 
 model SalesPoint {
-  id        String    @id
+  id        String                 @id
   companyId String
-  company   Company   @relation(fields: [companyId], references: [id])
+  company   Company                @relation(fields: [companyId], references: [id])
   advisors  Advisor[]
   leads     Lead[]
+  inventory MotorcycleInventory[]
 
   @@index([companyId])
 }
 
 model Advisor {
-  id            String     @id
+  id            String       @id
   name          String
   companyId     String
   salesPointId  String
   dailyCapacity Int
   active        Boolean
   joinedAt      DateTime?
-  company       Company    @relation(fields: [companyId], references: [id])
-  salesPoint    SalesPoint @relation(fields: [salesPointId], references: [id])
+  company       Company      @relation(fields: [companyId], references: [id])
+  salesPoint    SalesPoint   @relation(fields: [salesPointId], references: [id])
   assignments   Assignment[]
 
   @@index([companyId, salesPointId, active])
 }
 
+// Customer identity is deterministic and always scoped by company:
+//   1. normalized phone exists      -> dedupeKey = "phone:<normalizedPhone>"
+//   2. else normalized email exists -> dedupeKey = "email:<normalizedEmail>"
+//   3. else                         -> dedupeKey = "lead:<leadId>"
+// normalizedPhone/normalizedEmail are retained for querying and audit,
+// but dedupeKey + companyId is the actual identity constraint. We never
+// fuzzy-merge on name similarity.
 model Customer {
   id              String   @id @default(cuid())
   companyId       String
+  dedupeKey       String
   normalizedName  String?
   normalizedPhone String?
   normalizedEmail String?
-  city             String?
-  company          Company  @relation(fields: [companyId], references: [id])
-  leads            Lead[]
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  city            String?
+  company         Company  @relation(fields: [companyId], references: [id])
+  leads           Lead[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  @@unique([companyId, normalizedPhone])
+  @@unique([companyId, dedupeKey])
+  @@index([companyId, normalizedPhone])
   @@index([companyId, normalizedEmail])
 }
 
 model Lead {
-  id                 String      @id
-  companyId          String
-  salesPointId       String
-  customerId         String?
-  registeredAt       DateTime?
-  channel            LeadChannel
-  customerNameRaw    String?
-  phoneRaw           String?
-  emailRaw           String?
-  cityRaw            String?
-  motorcycleTextRaw  String?
-  status             LeadStatus
-  firstContactAt     DateTime?
-  campaign           String?
-  sourceFingerprint  String
-  rawPayload         Json
-  company            Company     @relation(fields: [companyId], references: [id])
-  salesPoint         SalesPoint  @relation(fields: [salesPointId], references: [id])
-  customer           Customer?   @relation(fields: [customerId], references: [id])
-  conversations      Conversation[]
-  aiExtractions      AiExtraction[]
-  scores             LeadScore[]
-  assignments        Assignment[]
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  id                String      @id
+  companyId         String
+  salesPointId      String
+  customerId        String?
+  registeredAt      DateTime?
+  registeredAtAmbiguous Boolean @default(false)
+  channel           LeadChannel
+  status            LeadStatus
+
+  // Raw values as received from the source, kept for audit.
+  customerNameRaw   String?
+  phoneRaw          String?
+  emailRaw          String?
+  cityRaw           String?
+  motorcycleTextRaw String?
+
+  // Normalized counterparts, kept alongside the raw values.
+  normalizedName    String?
+  normalizedPhone   String?
+  normalizedEmail   String?
+  cityNormalized    String?
+
+  motorcycleSku            String?
+  motorcycleMatchConfidence Float?
+  motorcycleMatchMethod    String?
+
+  firstContactAt         DateTime?
+  firstContactAtAmbiguous Boolean  @default(false)
+  campaign                String?
+
+  sourceFingerprint String
+  rawPayload        Json
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  salesPoint    SalesPoint     @relation(fields: [salesPointId], references: [id])
+  customer      Customer?      @relation(fields: [customerId], references: [id])
+  motorcycle    Motorcycle?    @relation(fields: [motorcycleSku], references: [sku])
+  conversations Conversation[]
+  aiExtractions AiExtraction[]
+  scores        LeadScore[]
+  assignments   Assignment[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([companyId, salesPointId, status])
   @@index([registeredAt])
+  @@index([customerId])
 }
 
+// A conversation whose sourceLeadId does not match any known Lead is kept
+// (isOrphan = true, leadId = null) instead of being dropped or crashing.
 model Conversation {
-  id          String    @id
-  leadId      String?
+  id           String    @id
+  leadId       String?
   sourceLeadId String
-  channel     String?
-  startedAt   DateTime?
-  isOrphan    Boolean   @default(false)
-  lead        Lead?     @relation(fields: [leadId], references: [id])
-  messages    Message[]
-  createdAt   DateTime  @default(now())
+  channel      String?
+  startedAt    DateTime?
+  isOrphan     Boolean   @default(false)
+  lead         Lead?     @relation(fields: [leadId], references: [id])
+  messages     Message[]
+  createdAt    DateTime  @default(now())
 
   @@index([leadId])
   @@index([isOrphan])
+  @@index([sourceLeadId])
 }
 
+// The source does not provide globally unique message ids, so the id is
+// derived deterministically from conversationId + index + message content
+// (see src/pipeline/persist/fingerprint.ts#messageId). This keeps reruns
+// idempotent without inventing random ids.
 model Message {
-  id             String       @id @default(cuid())
+  id             String       @id
   conversationId String
+  index          Int
   sender         String
   sentTime       String?
   text           String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  @@index([conversationId])
+  @@index([conversationId, index])
 }
 
 model Motorcycle {
-  sku         String                @id
-  brand       String
-  line        String
+  sku          String                @id
+  brand        String
+  line         String
   displacement Int
-  segment     String
-  listPrice   Int
-  inventory   MotorcycleInventory[]
+  segment      String
+  listPrice    Int
+  inventory    MotorcycleInventory[]
+  leads        Lead[]
 }
 
+// Mapping decision (documented in docs/architecture.md): the source catalog
+// gives a pipe-separated list of sales points where a model is available
+// plus ONE global unidades_disponibles value. We create one
+// MotorcycleInventory row per listed sales point and store that same global
+// count on every row as unitsGlobal. This is NOT a proven per-store stock
+// number -- it is the source-level/global availability figure, exposed
+// verbatim so downstream consumers cannot mistake it for real per-store
+// inventory. We never invent a per-store split.
 model MotorcycleInventory {
-  id           String     @id @default(cuid())
+  id            String     @id @default(cuid())
   motorcycleSku String
-  salesPointId String
-  available    Boolean    @default(true)
-  unitsGlobal  Int
-  motorcycle   Motorcycle @relation(fields: [motorcycleSku], references: [sku], onDelete: Cascade)
+  salesPointId  String
+  available     Boolean    @default(true)
+  unitsGlobal   Int
+  motorcycle    Motorcycle @relation(fields: [motorcycleSku], references: [sku], onDelete: Cascade)
+  salesPoint    SalesPoint @relation(fields: [salesPointId], references: [id])
 
   @@unique([motorcycleSku, salesPointId])
   @@index([salesPointId, available])
@@ -181,71 +237,115 @@ model AiExtraction {
   confidence           Float?
   evidence             Json?
   provider             String?
-  model                 String?
-  promptVersion         String
-  lead                  Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  createdAt             DateTime @default(now())
+  model                String?
+  promptVersion        String
+  lead                 Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdAt            DateTime @default(now())
 
   @@index([leadId, createdAt])
 }
 
 model LeadScore {
-  id              String      @id @default(cuid())
-  leadId          String
-  propensity      Float
-  intent          Float
-  urgency         Float
-  inventoryBonus  Float
-  totalScore      Float
-  temperature     Temperature
-  explanation     Json
-  modelVersion    String
-  lead             Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  createdAt        DateTime     @default(now())
+  id             String      @id @default(cuid())
+  leadId         String
+  propensity     Float
+  intent         Float
+  urgency        Float
+  inventoryBonus Float
+  totalScore     Float
+  temperature    Temperature
+  explanation    Json
+  modelVersion   String
+  lead           Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now())
 
   @@index([leadId, createdAt])
   @@index([totalScore])
 }
 
 model Assignment {
-  id         String   @id @default(cuid())
-  leadId     String
-  advisorId  String
+  id          String   @id @default(cuid())
+  leadId      String
+  advisorId   String
   assignedFor DateTime
-  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  advisor    Advisor  @relation(fields: [advisorId], references: [id])
-  createdAt  DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  advisor     Advisor  @relation(fields: [advisorId], references: [id])
+  createdAt   DateTime @default(now())
 
   @@unique([leadId, assignedFor])
   @@index([advisorId, assignedFor])
 }
 
+// A new PipelineRun row is created on every execution -- this is
+// operational history and is expected to grow. PipelineIssue rows are
+// deduplicated separately (see PipelineIssue.fingerprint) so a rerun of the
+// same unchanged dataset does not create duplicate issue rows.
 model PipelineRun {
-  id              String            @id @default(cuid())
-  status          PipelineRunStatus
-  startedAt       DateTime          @default(now())
-  finishedAt      DateTime?
-  received        Int               @default(0)
-  processed       Int               @default(0)
-  duplicates      Int               @default(0)
-  orphanConversations Int           @default(0)
-  warnings        Int               @default(0)
-  errors          Int               @default(0)
-  metadata        Json?
-  issues          PipelineIssue[]
+  id                      String            @id @default(cuid())
+  status                  PipelineRunStatus @default(RUNNING)
+  startedAt               DateTime          @default(now())
+  finishedAt              DateTime?
+  leadsReceived           Int               @default(0)
+  leadsPersisted          Int               @default(0)
+  customersPersisted      Int               @default(0)
+  conversationsPersisted  Int               @default(0)
+  messagesPersisted       Int               @default(0)
+  duplicateLeadIds        Int               @default(0)
+  duplicateCustomerGroups Int               @default(0)
+  // Field-occurrence count: one ambiguous fecha_registro AND one ambiguous
+  // fecha_primer_contacto on the same lead count as 2 here. See
+  // leadsWithAmbiguousDates for the lead-level (deduplicated) view.
+  ambiguousDateFields     Int               @default(0)
+  // Distinct canonical leads with >=1 ambiguous date field. Always
+  // <= ambiguousDateFields (a lead can be ambiguous on both fields at once).
+  leadsWithAmbiguousDates Int               @default(0)
+  missingCities           Int               @default(0)
+  // Non-empty motorcycle-interest text that could not be safely matched to
+  // the catalog. See missingMotorcycleInterest for leads that stated no
+  // interest at all -- that is a different condition, not "unresolved".
+  unresolvedMotorcycles   Int               @default(0)
+  missingMotorcycleInterest Int             @default(0)
+  orphanConversations     Int               @default(0)
+  sourceRecordChanged     Int               @default(0)
+  warnings                Int               @default(0)
+  errors                  Int               @default(0)
+  failureReason           String?
+  metadata                Json?
+  issues                  PipelineIssue[]
+
+  @@index([status, startedAt])
 }
 
+// fingerprint uniquely identifies "the same underlying data-quality problem"
+// (type + entity + field + value), independent of which run found it, so
+// rerunning an unchanged dataset increments reobservedRunCount instead of
+// inserting a new row. pipelineRunId is the run that FIRST detected the
+// issue; lastSeenPipelineRunId/lastSeenAt track the most recent occurrence.
+//
+// reobservedRunCount is the number of SEPARATE PIPELINE EXECUTIONS in which
+// this exact issue fingerprint was observed -- run 1 detecting it sets it to
+// 1, run 2 (unchanged dataset) bumps it to 2, and so on. It is NOT the
+// number of source rows/customers affected and NOT a business-event
+// frequency -- it purely reflects how many times the pipeline has been run
+// while this condition still holds. Do not chart it as "how often this
+// happened in the data" on a dashboard.
 model PipelineIssue {
-  id            String      @id @default(cuid())
-  pipelineRunId String
-  type          String
-  severity      String
-  entityType    String?
-  entityId      String?
-  rawValue      String?
-  message       String
-  pipelineRun   PipelineRun @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
-  createdAt     DateTime    @default(now())
+  id                    String                @id @default(cuid())
+  fingerprint           String                @unique
+  type                  String
+  severity              PipelineIssueSeverity
+  entityType            String?
+  entityId              String?
+  field                 String?
+  rawValue              String?
+  message               String
+  pipelineRunId         String
+  pipelineRun           PipelineRun           @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+  reobservedRunCount    Int                   @default(1)
+  lastSeenAt            DateTime              @default(now())
+  lastSeenPipelineRunId String
+  createdAt             DateTime              @default(now())
 
   @@index([pipelineRunId, severity])
+  @@index([type])
 }
