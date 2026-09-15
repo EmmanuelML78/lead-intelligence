@@ -4,11 +4,12 @@ MVP for the Analista IA technical assessment. It turns raw multi-channel leads i
 
 ## Business goal
 
-Prioritize scarce commercial capacity using three signals:
+Prioritize scarce commercial capacity using four signals:
 
 1. historical propensity;
 2. intent extracted from WhatsApp;
-3. operational urgency based on how long a lead has been waiting.
+3. operational urgency based on how long a lead has been waiting;
+4. global catalog availability for the resolved motorcycle model.
 
 ## Pipeline
 
@@ -37,7 +38,7 @@ bunx prisma migrate deploy   # applies the prepared migrations in prisma/migrati
 bun run pipeline
 ```
 
-The `pipeline` command runs the full flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`). Scoring execution and assignment execution are not implemented yet.
+The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`). Advisor assignment is intentionally not implemented yet.
 
 ### AI conversation extraction (Milestone 3)
 
@@ -70,6 +71,40 @@ Primary target (Model A): `Cerrado = 1`; `Perdido` and `Sin gestión = 0`. Sensi
 `horas_al_primer_contacto` and `numero_contactos` are excluded from training and runtime input because they are post-treatment leakage. First-contact time appears only in descriptive buckets. Python is not needed by the Next.js runtime; `src/lib/scoring/propensity.ts` validates and evaluates the JSON coefficients deterministically.
 
 **Historical tabular data has limited predictive signal. The propensity model is therefore one component of prioritization, not an autonomous sales decision-maker.**
+
+### Hybrid operational priority (Milestone 5)
+
+`hybrid-v1` answers **which lead should the commercial team work next**. It is not a probability of sale. Historical propensity and AI intent are inputs, not final decisions.
+
+The formula uses independently persisted 0–100 components:
+
+```text
+priority =
+  historical propensity × 20%
+  + AI commercial intent × 35%
+  + operational urgency × 40%
+  + global catalog availability × 5%
+```
+
+These weights are business-calibrated starting values, not scientifically optimized constants. Propensity receives only 20% because Milestone 4 found modest discrimination. AI extraction confidence is not used: it measures extraction quality, and the live check's uniform `0.95` offered no ranking signal.
+
+Intent starts at `HIGH=100`, `MEDIUM=65`, `LOW=25`, or `UNKNOWN=40`. Bounded modifiers add appointment `+10`, quote `+8`, declared down payment `+6`, and explicit payment method `+4`; comparison subtracts `8`, while another substantive objection subtracts `5`.
+
+Uncontacted urgency is SLA-oriented: `<15m=35`, `15–45m=50`, `45–60m=75`, `1–4h=90`, `4–24h=95`, and `24h+=100`. A contacted lead uses `20`; missing or ambiguous registration time uses neutral `50`. This uses current lead age and contact state only—never historical `horas_al_primer_contacto`.
+
+Inventory uses deterministic SKU resolution against **global catalog units** (`unidades_disponibles`). The source does not provide company or store stock. `CATALOG_AVAILABLE` (`unitsGlobal > 0`) scores `100`, `CATALOG_UNAVAILABLE` (`unitsGlobal = 0`) scores `20`, and a missing/unresolved model is `UNKNOWN`/`50`. Explanations say the model has global catalog availability; they never claim stock at a company or sales point. Company isolation still applies to leads, customers, conversations, scores, and advisors. Catalog inventory is shared reference data.
+
+Priority bands are operational thresholds: `CRITICAL >= 55`, `HIGH >= 45`, `MEDIUM >= 30`, otherwise `LOW`. These anchors ensure a 24h+ uncontacted lead with neutral AI remains critical and an approaching/overdue lead remains high without letting the 5% inventory signal decide the operational band. The supplied snapshot is bimodal at wall-clock scoring (contacted → LOW, 24h+ uncontacted → CRITICAL), so HIGH is rare by construction rather than by dashboard cosmetics.
+
+Every row stores component values, full-precision contributions, factual explanation/details, score version, and a SHA-256 input fingerprint. `(leadId, scoreVersion, inputFingerprint)` prevents identical duplicates while preserving history when relevant inputs or versions change.
+
+Run persisted/cached data analysis without calling Gemini:
+
+```bash
+bun run analysis:priority
+```
+
+The command scores current database leads, reports distribution/coverage and sanity samples, and reuses identical `LeadScore` rows.
 
 ### Database migrations
 

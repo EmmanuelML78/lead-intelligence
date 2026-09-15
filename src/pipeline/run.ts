@@ -11,6 +11,7 @@ import { persistLead } from "./persist/leads";
 import { persistIssues, type PipelineIssueInput } from "./persist/pipeline-issue";
 import { createPipelineRun, emptyCounters, finalizePipelineRun, type PipelineRunCounters } from "./persist/pipeline-run";
 import { persistReferenceData } from "./persist/reference-data";
+import { runScoringStage, type ScoringStageReport } from "./scoring-stage";
 import type { RawAdvisor, RawConversation, RawLead, RawMotorcycle } from "./types";
 import { validateRawLead } from "./validate";
 
@@ -166,13 +167,22 @@ async function main() {
     issues.push(...aiIssues);
     printAiStageSummary(aiStageReport);
 
-    // 8. record issues (deduplicated by fingerprint) -------------------------
+    // 8. hybrid operational priority scoring --------------------------------
+    // Uses persisted/cached AI extractions only. It never invokes Gemini.
+    const { report: scoringReport, issues: scoringIssues } = await runScoringStage(prisma);
+    issues.push(...scoringIssues);
+    printScoringStageSummary(scoringReport);
+
+    // 9. record issues (deduplicated by fingerprint) -------------------------
     counters.warnings = issues.filter((i) => i.severity === "WARNING").length;
     counters.errors = issues.filter((i) => i.severity === "ERROR").length;
     await persistIssues(prisma, pipelineRun.id, issues);
 
-    // 9. finalize -------------------------------------------------------------
-    await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, { aiExtraction: aiStageReport });
+    // 10. finalize ------------------------------------------------------------
+    await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, {
+      aiExtraction: aiStageReport,
+      scoring: scoringReport
+    });
 
     printSummary(counters, pipelineRun.id);
   } catch (error) {
@@ -200,6 +210,23 @@ function printAiStageSummary(report: AiStageReport) {
     validationFailures: report.validationFailures,
     providerFailures: report.providerFailures,
     skippedNoApiKey: report.skippedNoApiKey
+  });
+}
+
+function printScoringStageSummary(report: ScoringStageReport) {
+  console.log("\nHybrid priority scoring stage:", report.scoreVersion);
+  console.table({
+    countScored: report.countScored,
+    created: report.created,
+    reused: report.reused,
+    failures: report.failures,
+    realAiExtraction: report.realAiExtraction,
+    neutralAiFallback: report.neutralAiFallback,
+    resolvedInventory: report.resolvedInventory,
+    unresolvedOrMissingInventory: report.unresolvedOrMissingInventory,
+    contacted: report.contacted,
+    uncontacted: report.uncontacted,
+    neutralUrgencyFallback: report.neutralUrgencyFallback
   });
 }
 

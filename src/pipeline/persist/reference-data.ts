@@ -60,9 +60,9 @@ export async function persistReferenceData(db: PrismaClient, input: ReferenceDat
         };
         await tx.motorcycle.upsert({ where: { sku }, update: motoData, create: { sku, ...motoData } });
 
-        // See docs/architecture.md "Inventory mapping decision": one row per
-        // listed sales point, all sharing the same source-level global
-        // units figure. We do not invent a per-store split.
+        // Catalog listing only: one row per puntos_venta_disponibles entry,
+        // all sharing the same global unidades_disponibles. This is not
+        // store stock and not company inventory. Scoring reads units by SKU.
         const unitsGlobal = Number.parseInt(moto.unidades_disponibles, 10) || 0;
         const salesPointIds = moto.puntos_venta_disponibles
           .split("|")

@@ -40,10 +40,10 @@ enum PipelineIssueSeverity {
   ERROR
 }
 
-enum Temperature {
-  VERY_HOT
-  HOT
-  WARM
+enum PriorityBand {
+  CRITICAL
+  HIGH
+  MEDIUM
   LOW
 }
 
@@ -228,14 +228,13 @@ model Motorcycle {
   leads        Lead[]
 }
 
-// Mapping decision (documented in docs/architecture.md): the source catalog
-// gives a pipe-separated list of sales points where a model is available
-// plus ONE global unidades_disponibles value. We create one
-// MotorcycleInventory row per listed sales point and store that same global
-// count on every row as unitsGlobal. This is NOT a proven per-store stock
-// number -- it is the source-level/global availability figure, exposed
-// verbatim so downstream consumers cannot mistake it for real per-store
-// inventory. We never invent a per-store split.
+// Mapping decision (documented in docs/architecture.md): catalogo_motos.csv
+// has puntos_venta_disponibles (catalog listing of sales points) plus ONE
+// global unidades_disponibles value. We persist one MotorcycleInventory row
+// per listed sales point so the catalog listing is auditable, and copy that
+// same global count onto every row as unitsGlobal. This is global catalog
+// reference data, NOT company stock and NOT store stock. Scoring must look
+// up units by SKU only and must not claim sede/company availability.
 model MotorcycleInventory {
   id            String     @id @default(cuid())
   motorcycleSku String
@@ -297,21 +296,23 @@ model AiExtraction {
 }
 
 model LeadScore {
-  id             String      @id @default(cuid())
-  leadId         String
-  propensity     Float
-  intent         Float
-  urgency        Float
-  inventoryBonus Float
-  totalScore     Float
-  temperature    Temperature
-  explanation    Json
-  modelVersion   String
-  lead           Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  createdAt      DateTime    @default(now())
+  id                   String       @id @default(cuid())
+  leadId               String
+  propensityComponent  Float
+  intentComponent      Float
+  urgencyComponent     Float
+  inventoryComponent   Float
+  totalScore           Float
+  priorityBand         PriorityBand
+  explanation          Json
+  scoreVersion         String
+  inputFingerprint     String
+  lead                  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdAt             DateTime     @default(now())
 
   @@index([leadId, createdAt])
   @@index([totalScore])
+  @@unique([leadId, scoreVersion, inputFingerprint])
 }
 
 model Assignment {

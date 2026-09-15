@@ -53,7 +53,12 @@ The source gives messages no id at all, so `Message.id` is derived deterministic
 
 `Company`, `SalesPoint`, `Advisor`, `Motorcycle` all upsert by their natural key (id / sku). `MotorcycleInventory` is the one place a real mapping decision was made:
 
-The catalog gives a pipe-separated list of sales points where a model is available, plus **one global** `unidades_disponibles` figure — there is no per-store breakdown in the source. We create **one `MotorcycleInventory` row per listed sales point**, and store that same global count on every one of those rows as `unitsGlobal`. This is intentionally *not* presented as a proven per-store stock number; the field name and the code/schema comments make clear it is the source-level/global availability figure. We do not invent a per-store split — that would be fabricating data the source doesn't provide.
+`catalogo_motos.csv` has two inventory-related columns:
+
+- `puntos_venta_disponibles`: pipe-separated sales-point ids. This is a **catalog listing** of where the model is offered, not proven physical stock at those stores, and it has no `empresa_id`.
+- `unidades_disponibles`: **one integer per SKU**. There is no per-store or per-company breakdown.
+
+We persist **one `MotorcycleInventory` row per listed sales point** so the catalog listing stays auditable, and copy that same global count onto every row as `unitsGlobal`. Those rows are global reference data attached to sales-point ids for listing history. They are **not** company inventory and **not** store stock. Scoring looks up `unitsGlobal` by SKU only. We do not invent a per-store split.
 
 ### Data-quality issues (`PipelineIssue`)
 
@@ -110,7 +115,7 @@ Messages are rendered in persisted `index` order as `[HH:MM] ROLE: text`, mappin
 
 ### Cache / idempotency (`src/pipeline/persist/ai-extractions.ts`)
 
-Before calling the provider, the AI stage looks for an existing `AiExtraction` matching `(conversationId, conversationHash, promptVersion, model)`. A match is a cache hit — the provider is never called and no new row is written. A miss (changed transcript, prompt version, or model) always creates a **new** row; `AiExtraction` history is never overwritten or deleted, so every past extraction attempt for a conversation stays queryable.
+Before calling the provider, the AI stage looks for an existing `AiExtraction` matching `(conversationId, conversationHash, promptVersion, model, extractionVersion)`. A match is a cache hit — the provider is never called and no new row is written. A miss (changed transcript, prompt version, model, or extraction contract) always creates a **new** row; `AiExtraction` history is never overwritten or deleted, so every past extraction attempt for a conversation stays queryable.
 
 ### Provider abstraction (`src/lib/ai/provider.ts`, `src/lib/ai/providers/gemini.ts`)
 
@@ -215,6 +220,88 @@ Excluding unmanaged rows does not improve discrimination; ROC-AUC and Lift@10 de
 Historical source rows are not persisted in PostgreSQL. They serve offline training/validation, and the operational product needs only the versioned artifact. Adding a historical table would create database complexity without a runtime product requirement.
 
 **Historical tabular data has limited predictive signal. The propensity model is therefore one component of prioritization, not an autonomous sales decision-maker.**
+
+## Milestone 5 — hybrid operational priority
+
+### Decision
+
+`hybrid-v1` ranks current work. It answers “which lead should the commercial team work next?”, not “will this customer buy?”. The final 0–100 value combines four separately inspectable 0–100 components:
+
+```text
+totalScore =
+  propensityComponent × 0.20
+  + intentComponent × 0.35
+  + urgencyComponent × 0.40
+  + inventoryComponent × 0.05
+```
+
+The 20/35/40/5 weights are business-calibrated V1 starting values, not scientifically optimized constants. Historical propensity is deliberately limited to 20% because Milestone 4 found only modest predictive signal. Operational urgency dominates because delayed first response is the directly actionable business failure.
+
+### Historical propensity component
+
+The deterministic TypeScript runtime evaluates `propensity-model-v1`; probability `0..1` becomes component `0..100`. Live fields are channel, tenant/store, deterministic catalog model and price, plus supported declarations from the latest persisted extraction. Missing extraction declarations become `UNKNOWN`. A missing motorcycle uses the artifact's numeric mean and an unknown model category, avoiding a fabricated price effect.
+
+`horas_al_primer_contacto`, contact count, outcome, and every other post-treatment field remain excluded. Current `firstContactAt` is used only as a boolean operational state in urgency.
+
+### AI commercial intent component
+
+Base mapping:
+
+- `HIGH = 100`
+- `MEDIUM = 65`
+- `LOW = 25`
+- `UNKNOWN = 40`
+- no extraction = neutral `40`
+
+Bounded deterministic modifiers:
+
+- explicit appointment request: `+10`
+- explicit quote request: `+8`
+- positive declared down payment: `+6`
+- explicit cash/credit method: `+4`
+- comparison objection: `-8`
+- another substantive objection: `-5`
+
+The result is clamped to `0..100`. `AiExtraction.confidence` never changes score or input fingerprint in V1. It is extraction-quality metadata—not purchase probability—and the live sample's uniform `0.95` has no ranking value.
+
+### Operational urgency component
+
+V1 uses current lead age at the scoring decision:
+
+- uncontacted `<15m`: `35` — fresh but actionable
+- uncontacted `15–45m`: `50`
+- uncontacted `45–60m`: `75` — approaching one-hour SLA
+- uncontacted `1–4h`: `90` — overdue
+- uncontacted `4–24h`: `95` — severely overdue
+- uncontacted `24h+`: `100` — critical
+- already contacted: `20` — initial-response SLA reduced
+- missing or ambiguous registration time: neutral `50`
+
+Future-dated registrations clamp to age zero. Ambiguous parsed dates remain persisted for audit but are not treated as exact SLA clocks. The engine does not infer follow-up urgency after first contact because no reliable next-action timestamp exists.
+
+### Inventory component and isolation
+
+SKU comes only from deterministic catalog resolution: lead-level resolved SKU first, then persisted AI extraction's post-LLM deterministic SKU. Units come from global catalog reference data (`unidades_disponibles` / `unitsGlobal`) looked up by SKU. Scoring does not query company or sales-point stock, because the source does not provide it.
+
+- resolved SKU + `unitsGlobal > 0` → `CATALOG_AVAILABLE` = `100`
+- resolved SKU + `unitsGlobal = 0` → `CATALOG_UNAVAILABLE` = `20`
+- missing/unresolved SKU, or no catalog units row → `UNKNOWN` = `50`
+
+Salesperson copy is conservative: “el modelo registra disponibilidad global en el catálogo”. It never claims stock in a sede, company, or guaranteed physical availability.
+
+Company isolation remains mandatory for leads, customers, conversations, scores, advisors, and assignments. Catalog inventory is shared reference data; tenant isolation and inventory granularity are different things. The fingerprint hashes `sku`, `catalogStatus`, and `unitsGlobal` — not a store or company inventory key. `scoreVersion` stays `hybrid-v1` because weights and bands did not change; previous store-scoped fingerprints remain as history.
+
+### Bands, explanation, and persistence
+
+Operational thresholds are `CRITICAL >= 55`, `HIGH >= 45`, `MEDIUM >= 30`, and `LOW < 30`. They were anchored after inspecting canonical scores: `55` ensures a 24h+ uncontacted lead with neutral AI remains critical even without stock; `45` makes an approaching/overdue neutral lead high; `30` separates actionable context from low initial-response urgency. This also prevents the 5% inventory term from being the sole reason an otherwise identical overdue lead crosses an operational band.
+
+Wall-clock scoring of the supplied snapshot is bimodal, not dashboard-balanced: contacted leads cluster in LOW, uncontacted leads with ambiguous registration time in MEDIUM, and 24h+ uncontacted leads in CRITICAL. HIGH is thin because almost no lead currently sits in the 45–60 minute SLA window. Observed `hybrid-v1` distribution on 1,501 canonical leads after the 5.1 catalog-semantics correction: min 21.08, median 28.81, mean 37.43, p75 57.96, p90 60.68, max 81.68; CRITICAL 391, HIGH 1, MEDIUM 96, LOW 1,013. Operational bands are unchanged versus the prior store-scoped inventory lookup; mean/median rose because SKUs listed in the global catalog but not at the lead's sales point now score `CATALOG_AVAILABLE` instead of a fabricated store miss. AI coverage is 5 persisted extractions; the rest use the documented neutral intent fallback. Gemini is not invoked by scoring. The live catalog has no zero-unit SKUs, so `CATALOG_UNAVAILABLE` is unused on this snapshot.
+
+`LeadScore` stores all four components, full-precision total, band, concise factual salesperson explanation, machine-readable raw values/contributions, `scoreVersion`, and SHA-256 `inputFingerprint`. Total is rounded only by presentation consumers.
+
+The fingerprint contains relevant AI fields, propensity input and complete artifact, urgency source/bucket, catalog inventory (`sku`, `catalogStatus`, `unitsGlobal`), weights, and score version. It intentionally excludes AI confidence, exact decision timestamp, and store/company inventory keys. Age changing inside one SLA bucket does not create duplicate history; crossing a bucket does. Unique `(leadId, scoreVersion, inputFingerprint)` makes identical reruns idempotent while preserving prior versions and prior input states. A reused identity refreshes stored explanation/components in place so copy fixes do not duplicate rows.
+
+The scoring stage consumes persisted/cached `AiExtraction` rows only. It never calls Gemini. Leads without conversations or extractions still score with neutral intent.
 
 RAW SOURCES
      │

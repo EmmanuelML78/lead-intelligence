@@ -157,7 +157,7 @@ export const propensityInputSchema = z
     listPrice: finiteNumber.nonnegative(),
     declaredDownPayment: z.enum(["YES", "NO", "UNKNOWN"]),
     declaredPaymentMethod: z.enum(["CREDIT", "CASH", "UNKNOWN"]),
-    requestedAppointment: z.boolean()
+    requestedAppointment: z.union([z.boolean(), z.literal("UNKNOWN")])
   })
   .strict();
 
@@ -204,7 +204,11 @@ function categoryValue(input: PropensityInput, feature: CategoricalFeatureName):
     case "declaredPaymentMethod":
       return input.declaredPaymentMethod;
     case "requestedAppointment":
-      return input.requestedAppointment ? "YES" : "NO";
+      return input.requestedAppointment === "UNKNOWN"
+        ? "UNKNOWN"
+        : input.requestedAppointment
+          ? "YES"
+          : "NO";
   }
 }
 
