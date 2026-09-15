@@ -38,7 +38,7 @@ bunx prisma migrate deploy   # applies the prepared migrations in prisma/migrati
 bun run pipeline
 ```
 
-The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`). Advisor assignment is intentionally not implemented yet.
+The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → **capacity-aware advisor assignment** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`).
 
 ### AI conversation extraction (Milestone 3)
 
@@ -105,6 +105,22 @@ bun run analysis:priority
 ```
 
 The command scores current database leads, reports distribution/coverage and sanity samples, and reuses identical `LeadScore` rows.
+
+### Advisor assignment (Milestone 6)
+
+The assignment engine answers **which eligible advisor at this lead's company and sales point should receive the lead today**. It is a capacity-aware greedy scheduler, not a dashboard and not an LLM call.
+
+Eligibility requires all of: `advisor.active`, same `companyId`, same `salesPointId`, and remaining daily capacity. Leads are processed in `hybrid-v1` `totalScore` DESC, then trusted registration time ASC, then `leadId` ASC. Operational bands never override the numeric score. Assignable statuses are the open ones (`SIN_GESTION`, `CONTACTADO`, `NO_CONTESTA`, `COTIZACION_ENVIADA`, `EN_PROCESO`). `DESCARTADO` and `UNKNOWN` are not assigned.
+
+Among eligible advisors the engine chooses lowest `assignmentsToday / dailyCapacity`, then lowest raw `assignmentsToday`, then `advisorId` ASC. Daily capacity is scoped to an explicit America/Bogota business date stored as UTC midnight (date-only). Set `ASSIGNMENT_BUSINESS_DATE=YYYY-MM-DD` for deterministic runs; production may omit it and use today's Bogotá calendar date. Same lead + same business date with an active assignment is reused, never silently reassigned. Capacity exhaustion persists `CAPACITY_EXHAUSTED` rather than overflowing to another company or store.
+
+Run persisted/cached assignment analysis without calling Gemini:
+
+```bash
+bun run analysis:assignment
+```
+
+The command consumes current `hybrid-v1` scores, assigns (idempotently) for the target business date, and reports eligible/assigned/unassigned counts, utilization, overloaded pools, and isolation violations (must be 0).
 
 ### Database migrations
 

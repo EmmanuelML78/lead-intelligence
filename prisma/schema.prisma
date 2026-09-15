@@ -308,6 +308,7 @@ model LeadScore {
   scoreVersion         String
   inputFingerprint     String
   lead                  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignments           Assignment[]
   createdAt             DateTime     @default(now())
 
   @@index([leadId, createdAt])
@@ -315,17 +316,35 @@ model LeadScore {
   @@unique([leadId, scoreVersion, inputFingerprint])
 }
 
+// Operational assignment outcome for one lead on one business date.
+// assignedFor is a date-only value (UTC midnight of the America/Bogota
+// calendar date). advisorId is null when the lead could not be assigned;
+// those rows exist so the dashboard can explain waiting leads. Capacity
+// counts only rows with advisorId set. History is preserved by date:
+// a later business date creates a new row rather than overwriting.
+enum AssignmentReason {
+  ASSIGNED
+  NO_ACTIVE_ADVISOR
+  CAPACITY_EXHAUSTED
+  NO_ELIGIBLE_ADVISOR
+}
+
 model Assignment {
-  id          String   @id @default(cuid())
+  id          String           @id @default(cuid())
   leadId      String
-  advisorId   String
+  advisorId   String?
+  leadScoreId String?
   assignedFor DateTime
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  advisor     Advisor  @relation(fields: [advisorId], references: [id])
-  createdAt   DateTime @default(now())
+  reasonCode  AssignmentReason
+  explanation String
+  lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  advisor     Advisor?         @relation(fields: [advisorId], references: [id])
+  leadScore   LeadScore?       @relation(fields: [leadScoreId], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
 
   @@unique([leadId, assignedFor])
   @@index([advisorId, assignedFor])
+  @@index([reasonCode, assignedFor])
 }
 
 // A new PipelineRun row is created on every execution -- this is

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { prisma } from "../lib/db/client";
 import { parseMixedDate } from "../lib/normalization/date";
 import { runAiExtractionStage, type AiStageReport, type EligibleConversation } from "./ai-stage";
+import { runAssignmentStage, type AssignmentStageReport } from "./assignment-stage";
 import { deduplicateLeadRows } from "./dedupe-lead-rows";
 import { readCsv, readJson } from "./io";
 import { buildLeadRecord } from "./persist/build-lead-record";
@@ -173,15 +174,23 @@ async function main() {
     issues.push(...scoringIssues);
     printScoringStageSummary(scoringReport);
 
-    // 9. record issues (deduplicated by fingerprint) -------------------------
+    // 9. advisor assignment -------------------------------------------------
+    // Consumes persisted hybrid-v1 scores. Never invokes Gemini. Business
+    // date is explicit (ASSIGNMENT_BUSINESS_DATE) or America/Bogota today.
+    const { report: assignmentReport, issues: assignmentIssues } = await runAssignmentStage(prisma);
+    issues.push(...assignmentIssues);
+    printAssignmentStageSummary(assignmentReport);
+
+    // 10. record issues (deduplicated by fingerprint) -------------------------
     counters.warnings = issues.filter((i) => i.severity === "WARNING").length;
     counters.errors = issues.filter((i) => i.severity === "ERROR").length;
     await persistIssues(prisma, pipelineRun.id, issues);
 
-    // 10. finalize ------------------------------------------------------------
+    // 11. finalize ------------------------------------------------------------
     await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, {
       aiExtraction: aiStageReport,
-      scoring: scoringReport
+      scoring: scoringReport,
+      assignment: assignmentReport
     });
 
     printSummary(counters, pipelineRun.id);
@@ -227,6 +236,21 @@ function printScoringStageSummary(report: ScoringStageReport) {
     contacted: report.contacted,
     uncontacted: report.uncontacted,
     neutralUrgencyFallback: report.neutralUrgencyFallback
+  });
+}
+
+function printAssignmentStageSummary(report: AssignmentStageReport) {
+  console.log("\nAdvisor assignment stage:", report.scoreVersion, report.businessDate, report.timeZone);
+  console.table({
+    eligibleLeads: report.eligibleLeads,
+    assigned: report.assigned,
+    reused: report.reused,
+    unassigned: report.unassigned,
+    unassignedCapacity: report.unassignedDueToCapacity,
+    overloadedPools: report.overloadedPools.length,
+    crossCompanyAssignments: report.crossCompanyAssignments,
+    crossSalesPointAssignments: report.crossSalesPointAssignments,
+    inactiveAdvisorsReceivingAssignments: report.inactiveAdvisorsReceivingAssignments
   });
 }
 

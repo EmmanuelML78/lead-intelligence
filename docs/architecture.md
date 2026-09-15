@@ -303,6 +303,58 @@ The fingerprint contains relevant AI fields, propensity input and complete artif
 
 The scoring stage consumes persisted/cached `AiExtraction` rows only. It never calls Gemini. Leads without conversations or extractions still score with neutral intent.
 
+## Milestone 6 — advisor assignment
+
+### Decision
+
+Assignment answers “which eligible advisor at this lead’s company and sales point should receive this prioritized lead today?”. It is a capacity-aware greedy scheduler over in-memory company+sales-point pools. It does **not** call Gemini, change `hybrid-v1` weights/bands, or treat catalog units as store inventory.
+
+### Eligibility
+
+A lead is assignable when its operational status is open **and** it has a current `hybrid-v1` score:
+
+- assignable: `SIN_GESTION`, `CONTACTADO`, `NO_CONTESTA`, `COTIZACION_ENVIADA`, `EN_PROCESO`
+- not assignable: `DESCARTADO` (lost/cancelled terminal status in the source), `UNKNOWN` (unmapped/invalid)
+- not assignable: missing current `hybrid-v1` score
+
+There is no separate closed/completed status on operational leads. `historico_cierres.csv` remains offline training history.
+
+An advisor is eligible when **all** of these hold: `active = true`, `companyId` matches the lead, `salesPointId` matches the lead, remaining daily capacity `> 0`. Cross-company and cross-store assignment are hard errors, including when the foreign advisor is idle with larger capacity.
+
+### Current score selection
+
+The current valid score is the latest `LeadScore` row with `scoreVersion = hybrid-v1`, ordered by `createdAt DESC` then `id DESC`. Other versions are ignored even if newer by `createdAt`. Among `hybrid-v1` rows (pre- and post-5.1 inventory fingerprints), the latest identity wins. Bands never override `totalScore`.
+
+### Queue order
+
+Inside each company+sales-point pool:
+
+1. `totalScore` DESC
+2. trusted `registeredAt` ASC only when **both** leads have a non-ambiguous registration timestamp
+3. `leadId` ASC
+
+Ambiguous or missing registration times are skipped rather than ordered.
+
+### Capacity and business date
+
+`remainingCapacity = dailyCapacity - assignmentsForTargetBusinessDate` where only rows with `advisorId` set count. Daily capacity comes from `asesores.csv` (`capacidad_diaria_leads`).
+
+Business dates use `America/Bogota`. `assignedFor` is stored as UTC midnight of that calendar date (date-only, not a Bogotá instant). `ASSIGNMENT_BUSINESS_DATE=YYYY-MM-DD` is the explicit test/analysis input. When unset, production derives today from `now` in `BUSINESS_TIMEZONE` (default `America/Bogota`). Wall-clock UTC date is never used implicitly.
+
+### Load balancing
+
+Choose the eligible advisor with lowest normalized load `assignmentsToday / dailyCapacity`. Ties: `assignmentsToday` ASC, then `advisorId` ASC. This is **not** lowest raw count: 7/20 (35%) beats 5/10 (50%).
+
+### Idempotency and unassigned reasons
+
+`(leadId, assignedFor)` is unique. An active assignment (`advisorId` set) for that business date is reused; the engine never silently reassigns. History is preserved by writing a new row on a later business date rather than overwriting. Unassigned outcomes are persisted on the same table with `advisorId = null` and one of `NO_ACTIVE_ADVISOR`, `CAPACITY_EXHAUSTED`, `NO_ELIGIBLE_ADVISOR`, plus a concise Spanish explanation. No `AssignmentRun` model: `assignedFor`, `createdAt`, `leadScoreId`, and `explanation` are enough to audit target date, creation time, score used, and why.
+
+If a pool has more eligible leads than remaining active capacity, higher `totalScore` leads are assigned first; the rest wait in-pool. Capacity is never borrowed from another company or sales point.
+
+### Analysis
+
+`bun run analysis:assignment` consumes persisted `hybrid-v1` scores, never calls Gemini, and reports eligible/assigned/unassigned counts, utilization, overloaded pools (`eligible > active daily capacity`), and isolation violations (must be 0).
+
 RAW SOURCES
      │
      ▼

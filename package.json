@@ -10,6 +10,7 @@
     "pipeline": "bun run src/pipeline/run.ts",
     "analysis:propensity": "python3 analysis/train_propensity.py",
     "analysis:priority": "bun run scripts/score-distribution.ts",
+    "analysis:assignment": "bun run scripts/assignment-analysis.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
