@@ -52,12 +52,7 @@ function emptyReport(overrides: Partial<AiStageReport>): AiStageReport {
   };
 }
 
-export type AiProviderEnv = {
-  AI_PROVIDER?: string;
-  AI_API_KEY?: string;
-  AI_MODEL?: string;
-  AI_CONCURRENCY?: string;
-};
+export type AiProviderEnv = NodeJS.Dict<string | undefined>;
 
 /**
  * Only Gemini is implemented (spec item 7: "implement one real provider",

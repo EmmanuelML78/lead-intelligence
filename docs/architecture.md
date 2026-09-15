@@ -355,6 +355,38 @@ If a pool has more eligible leads than remaining active capacity, higher `totalS
 
 `bun run analysis:assignment` consumes persisted `hybrid-v1` scores, never calls Gemini, and reports eligible/assigned/unassigned counts, utilization, overloaded pools (`eligible > active daily capacity`), and isolation violations (must be 0).
 
+## Milestone 7 — operational dashboard
+
+### Decision
+
+The dashboard is a small finished product for a commercial manager, not a generic analytics suite. It reads persisted scores, assignments, extractions, and pipeline runs. It does not call Gemini, change scoring weights/bands, or change assignment rules.
+
+### Routes
+
+- `/` operational overview (KPIs + CRITICAL sample + saturated-pool callout)
+- `/leads` prioritized queue
+- `/leads/[id]` decision explanation
+- `/capacity` sales-point / advisor utilization
+- `/data-quality` latest `PipelineRun` + unique issue counts by type
+
+All pages are `force-dynamic`. Prisma stays server-side. Conversation messages load only on lead detail.
+
+### Demo tenant context (not production IAM)
+
+A cookie `demo_company_id` remembers the selected company. `requireCompanyId` is mandatory in every tenant-facing query. `getLeadDetail` uses `findFirst({ companyId, id })` so a foreign lead id is indistinguishable from missing. Customer, advisor, conversation, extraction, score, and assignment rows are included only when they belong to that company. The selector is documented in the UI as demo tenant context.
+
+### Current score
+
+Queue and detail use the same `selectCurrentScore` rule as Milestone 6: latest `hybrid-v1` row (`createdAt DESC`, `id DESC`). Other versions are ignored even if newer.
+
+### Data quality counts
+
+Issue charts count `PipelineIssue` rows grouped by `type`. `reobservedRunCount` is how many pipeline executions observed that fingerprint and is never summed as a volume metric.
+
+### Business date
+
+The dashboard uses the assignment engine clock (`ASSIGNMENT_BUSINESS_DATE` or today in `America/Bogota`). If that date has no assignment rows for the selected company, it falls back to the latest persisted `assignedFor` for that company so a synthetic snapshot remains demonstrable. This does not change the assignment engine.
+
 RAW SOURCES
      │
      ▼

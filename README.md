@@ -36,6 +36,7 @@ bun install
 bun run db:generate
 bunx prisma migrate deploy   # applies the prepared migrations in prisma/migrations
 bun run pipeline
+bun run dev                 # operational dashboard at http://localhost:3000
 ```
 
 The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → **capacity-aware advisor assignment** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`).
@@ -121,6 +122,47 @@ bun run analysis:assignment
 ```
 
 The command consumes current `hybrid-v1` scores, assigns (idempotently) for the target business date, and reports eligible/assigned/unassigned counts, utilization, overloaded pools, and isolation violations (must be 0).
+
+### Operational dashboard (Milestone 7)
+
+The product UI is a small Next.js App Router dashboard for a commercial manager. It does not call Gemini, does not change `hybrid-v1` weights/bands, and does not change assignment rules. After the pipeline has persisted data:
+
+```bash
+bun run dev
+```
+
+Open http://localhost:3000. The dataset is synthetic; the header says so.
+
+**Routes**
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Operational overview: eligible / CRITICAL / assigned / waiting / advisors / capacity, plus saturated pools |
+| `/leads` | Prioritized queue (`hybrid-v1` current score DESC). Filters: sales point, band, assignment, channel |
+| `/leads/[id]` | Score explanation, AI extraction, conversation, assignment |
+| `/capacity` | Sales-point pools and active-advisor utilization |
+| `/data-quality` | Latest `PipelineRun` and unique `PipelineIssue` counts by type |
+
+**Demo flow (~5 minutes)**
+
+1. Overview — see the capacity problem immediately.
+2. `/leads?band=CRITICAL` — work the highest-priority queue.
+3. Open one lead — hybrid components, disclaimer “Operational priority — not purchase probability”.
+4. AI extraction + evidence (or the explicit empty state) and the CUSTOMER/ADVISOR thread.
+5. Assignment: advisor + explanation, or waiting reason in plain language.
+6. `/capacity` — saturated sales points, inactive advisors excluded.
+7. `/data-quality` — pipeline observability. Counts are distinct issue fingerprints, never `sum(reobservedRunCount)`.
+
+**Company isolation**
+
+The company dropdown is **demo tenant context, not production IAM**. It sets an httpOnly cookie (`demo_company_id`). Every tenant-facing query in `src/lib/dashboard/queries.ts` requires `companyId` and filters in Prisma. Cross-company lead ids return not found. Conversations, AI extractions, scores, and assignments are loaded through that scoped lead, never as a global lookup. Data-quality is pipeline operational history (no per-company `PipelineRun`); that screen shows run totals and issue-type counts, not other tenants’ lead rows.
+
+**Limitations**
+
+- No identity-provider login, roles, or audit of who switched company.
+- Dashboard KPIs are company-scoped, so they will not match the global snapshot totals (1,352 eligible / 391 CRITICAL / …) unless you mentally sum companies.
+- Assignment date follows `ASSIGNMENT_BUSINESS_DATE` when set; otherwise today’s America/Bogota date, falling back to the latest persisted assignment date for the selected company so a snapshot remains demonstrable.
+- Deployment is not part of this milestone.
 
 ### Database migrations
 
