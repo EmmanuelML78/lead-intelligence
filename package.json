@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "pipeline": "bun run src/pipeline/run.ts",
+    "analysis:propensity": "python3 analysis/train_propensity.py",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

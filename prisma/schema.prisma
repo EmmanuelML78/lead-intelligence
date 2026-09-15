@@ -47,6 +47,31 @@ enum Temperature {
   LOW
 }
 
+enum AiPaymentMethod {
+  CASH
+  CREDIT
+  UNKNOWN
+}
+
+enum AiPurchaseIntent {
+  HIGH
+  MEDIUM
+  LOW
+  UNKNOWN
+}
+
+enum AiMainObjection {
+  PRICE
+  CREDIT
+  AVAILABILITY
+  MODEL
+  TIMING
+  COMPARISON
+  OTHER
+  NONE
+  UNKNOWN
+}
+
 model Company {
   id          String       @id
   name        String?
@@ -168,6 +193,7 @@ model Conversation {
   isOrphan     Boolean   @default(false)
   lead         Lead?     @relation(fields: [leadId], references: [id])
   messages     Message[]
+  aiExtractions AiExtraction[]
   createdAt    DateTime  @default(now())
 
   @@index([leadId])
@@ -223,26 +249,51 @@ model MotorcycleInventory {
   @@index([salesPointId, available])
 }
 
+// One row per successful extraction attempt -- history is never
+// overwritten (see docs/architecture.md "Milestone 3"). Re-extracting an
+// unchanged conversation under the same promptVersion/model is a cache hit
+// (src/pipeline/persist/ai-extractions.ts) and reuses the latest row
+// instead of inserting a duplicate; a changed transcript, promptVersion, or
+// model always produces a new row so the audit trail is complete.
+//
+// Failed extraction attempts (provider error or Zod validation failure)
+// are NOT persisted here -- they are recorded as PipelineIssue rows
+// (AI_EXTRACTION_PROVIDER_FAILED / AI_EXTRACTION_VALIDATION_FAILED) so
+// malformed data never masquerades as a valid extraction.
 model AiExtraction {
-  id                   String   @id @default(cuid())
+  id                   String           @id @default(cuid())
   leadId               String
+  conversationId       String
+  // SHA-256 of the canonical transcript (src/lib/ai/transcript.ts). Part of
+  // the cache/idempotency key together with promptVersion + model.
+  conversationHash     String
   motorcycleInterest   String?
+  // Resolved via the deterministic catalog matcher AFTER extraction -- the
+  // LLM never invents a SKU (see src/lib/normalization/motorcycle.ts).
+  motorcycleSku            String?
+  motorcycleMatchConfidence Float?
+  motorcycleMatchMethod    String?
   budget               Int?
   downPayment          Int?
-  paymentMethod        String?
-  purchaseIntent       String?
-  mainObjection        String?
-  requestedAppointment Boolean  @default(false)
-  requestedQuote       Boolean  @default(false)
-  confidence           Float?
-  evidence             Json?
-  provider             String?
-  model                String?
+  paymentMethod        AiPaymentMethod
+  purchaseIntent       AiPurchaseIntent
+  mainObjection        AiMainObjection
+  requestedAppointment Boolean
+  requestedQuote       Boolean
+  // Extraction confidence (0..1), NOT a purchase-propensity/sales signal.
+  confidence           Float
+  // Structured, auditable evidence: short verbatim excerpts per field.
+  evidence             Json
+  provider             String
+  model                String
   promptVersion        String
-  lead                 Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  createdAt            DateTime @default(now())
+  extractionVersion    String
+  lead                 Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt            DateTime     @default(now())
 
   @@index([leadId, createdAt])
+  @@index([conversationId, conversationHash, promptVersion, model, extractionVersion])
 }
 
 model LeadScore {

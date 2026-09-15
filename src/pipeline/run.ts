@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../lib/db/client";
 import { parseMixedDate } from "../lib/normalization/date";
+import { runAiExtractionStage, type AiStageReport, type EligibleConversation } from "./ai-stage";
 import { deduplicateLeadRows } from "./dedupe-lead-rows";
 import { readCsv, readJson } from "./io";
 import { buildLeadRecord } from "./persist/build-lead-record";
@@ -125,20 +126,25 @@ async function main() {
     counters.customersPersisted = persistedCustomerIds.size;
 
     // 6. persist conversations + messages ------------------------------------
+    // Conversations resolved to a real Lead (leadId !== null) are eligible
+    // for AI extraction in stage 7 -- an orphan conversation has no Lead to
+    // attach structured intelligence to.
+    const eligibleConversations: EligibleConversation[] = [];
     for (const raw of conversations) {
       const leadId = knownLeadIds.has(raw.lead_id) ? raw.lead_id : null;
+      const messages = raw.mensajes.map((m, index) => ({
+        index,
+        sender: m.emisor?.trim() || "unknown",
+        sentTime: m.hora?.trim() || null,
+        text: m.texto ?? ""
+      }));
       const normalizedConversation: NormalizedConversation = {
         id: raw.conversacion_id,
         sourceLeadId: raw.lead_id,
         leadId,
         channel: raw.canal?.trim() || null,
         startedAt: parseMixedDate(raw.fecha_inicio).date,
-        messages: raw.mensajes.map((m, index) => ({
-          index,
-          sender: m.emisor?.trim() || "unknown",
-          sentTime: m.hora?.trim() || null,
-          text: m.texto ?? ""
-        }))
+        messages
       };
 
       const { result, issues: convIssues } = await persistConversation(prisma, normalizedConversation);
@@ -147,15 +153,26 @@ async function main() {
       counters.conversationsPersisted += 1;
       counters.messagesPersisted += result.messagesPersisted;
       if (result.isOrphan) counters.orphanConversations += 1;
+      else if (leadId) eligibleConversations.push({ conversationId: raw.conversacion_id, leadId, messages });
     }
 
-    // 7. record issues (deduplicated by fingerprint) -------------------------
+    // 7. AI conversation extraction -------------------------------------------
+    // Never fails the pipeline: a missing AI_API_KEY (or per-conversation
+    // provider/validation failures) is reported in the run's metadata, not
+    // thrown (see docs/architecture.md "Milestone 3").
+    const { report: aiStageReport, issues: aiIssues } = await runAiExtractionStage(prisma, eligibleConversations, catalog, {
+      env: process.env
+    });
+    issues.push(...aiIssues);
+    printAiStageSummary(aiStageReport);
+
+    // 8. record issues (deduplicated by fingerprint) -------------------------
     counters.warnings = issues.filter((i) => i.severity === "WARNING").length;
     counters.errors = issues.filter((i) => i.severity === "ERROR").length;
     await persistIssues(prisma, pipelineRun.id, issues);
 
-    // 8. finalize -------------------------------------------------------------
-    await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters);
+    // 9. finalize -------------------------------------------------------------
+    await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, { aiExtraction: aiStageReport });
 
     printSummary(counters, pipelineRun.id);
   } catch (error) {
@@ -170,6 +187,20 @@ function printSummary(counters: PipelineRunCounters, pipelineRunId: string) {
   console.log("\nLead Intelligence — pipeline run", pipelineRunId, "\n");
   console.table(counters);
   console.log("\nDone.\n");
+}
+
+function printAiStageSummary(report: AiStageReport) {
+  console.log("\nAI conversation extraction stage:", report.status);
+  if (report.reason) console.log(report.reason);
+  console.table({
+    conversationsEligible: report.conversationsEligible,
+    cacheHits: report.cacheHits,
+    modelCalls: report.modelCalls,
+    successes: report.successes,
+    validationFailures: report.validationFailures,
+    providerFailures: report.providerFailures,
+    skippedNoApiKey: report.skippedNoApiKey
+  });
 }
 
 main()

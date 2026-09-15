@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "propensity-model-v1",
+  "generatedBy": "analysis/train_propensity.py",
+  "tolerance": 1e-12,
+  "fixtures": [
+    {
+      "name": "known-lost",
+      "input": {
+        "channel": "WHATSAPP",
+        "companyId": "EMP-03",
+        "salesPointId": "PV-013",
+        "motorcycleModel": "Bajaj Pulsar RS 200",
+        "listPrice": 15490000.0,
+        "declaredDownPayment": "UNKNOWN",
+        "declaredPaymentMethod": "UNKNOWN",
+        "requestedAppointment": false
+      },
+      "expectedProbability": 0.10621157512617747,
+      "expectedLogOdds": -2.1300359894262493
+    },
+    {
+      "name": "known-closed",
+      "input": {
+        "channel": "WHATSAPP",
+        "companyId": "EMP-02",
+        "salesPointId": "PV-007",
+        "motorcycleModel": "Bajaj Discover 125",
+        "listPrice": 6990000.0,
+        "declaredDownPayment": "UNKNOWN",
+        "declaredPaymentMethod": "CREDIT",
+        "requestedAppointment": true
+      },
+      "expectedProbability": 0.08238268041893923,
+      "expectedLogOdds": -2.410405214775353
+    },
+    {
+      "name": "unknown-categories",
+      "input": {
+        "channel": "PARTNER_REFERRAL",
+        "companyId": "EMP-UNKNOWN",
+        "salesPointId": "PV-UNKNOWN",
+        "motorcycleModel": "Unknown Future Model",
+        "listPrice": 12000000.0,
+        "declaredDownPayment": "UNKNOWN",
+        "declaredPaymentMethod": "UNKNOWN",
+        "requestedAppointment": false
+      },
+      "expectedProbability": 0.08408383637621668,
+      "expectedLogOdds": -2.3881104828390525
+    }
+  ]
+}

@@ -1,0 +1,592 @@
+{
+  "schemaVersion": 1,
+  "analysisVersion": "propensity-analysis-v1",
+  "generatedAt": "2026-09-14",
+  "dataset": {
+    "path": "data/raw/historico_cierres.csv",
+    "synthetic": true,
+    "exactOutcomeValues": [
+      "Cerrado",
+      "Perdido",
+      "Sin gestión"
+    ]
+  },
+  "businessQuestion": "Can available historical information separate leads that eventually closed from leads that did not?",
+  "targetPopulations": {
+    "modelA": {
+      "definition": "Cerrado = 1; Perdido and Sin gestión = 0",
+      "records": 2200,
+      "positiveRecords": 197
+    },
+    "modelB": {
+      "definition": "Cerrado = 1; Perdido = 0; Sin gestión excluded",
+      "records": 2021,
+      "positiveRecords": 197,
+      "exclusionRationale": "All 179 Sin gestión rows have missing horas_al_primer_contacto and numero_contactos = 0, so no observed sales-management opportunity exists."
+    }
+  },
+  "featureAvailability": [
+    {
+      "field": "lead_id",
+      "class": "A",
+      "included": false,
+      "reason": "Available identifier, but has no transferable commercial meaning."
+    },
+    {
+      "field": "fecha_registro",
+      "class": "A",
+      "included": false,
+      "reason": "Available, but excluded to avoid fragile date/season memorization in five months of synthetic data."
+    },
+    {
+      "field": "canal",
+      "class": "A",
+      "included": true,
+      "reason": "Known at lead creation."
+    },
+    {
+      "field": "empresa_id",
+      "class": "A",
+      "included": true,
+      "reason": "Known tenant context at lead creation."
+    },
+    {
+      "field": "punto_venta_id",
+      "class": "A",
+      "included": true,
+      "reason": "Known routing context at lead creation."
+    },
+    {
+      "field": "modelo_cotizado",
+      "class": "A",
+      "included": true,
+      "reason": "Quoted motorcycle is supplied as initial lead context."
+    },
+    {
+      "field": "precio_lista",
+      "class": "A",
+      "included": true,
+      "reason": "Catalog price of the quoted model is known at prioritization."
+    },
+    {
+      "field": "horas_al_primer_contacto",
+      "class": "B",
+      "included": false,
+      "reason": "Post-treatment response-time outcome; descriptive analysis only."
+    },
+    {
+      "field": "numero_contactos",
+      "class": "B",
+      "included": false,
+      "reason": "Accumulated after sales management starts."
+    },
+    {
+      "field": "manifesto_cuota_inicial",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that this declaration is captured in the inbound lead before advisor contact."
+    },
+    {
+      "field": "forma_pago_declarada",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that declared payment method is captured in the inbound lead."
+    },
+    {
+      "field": "pidio_cita",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that appointment request is customer-provided before prioritization."
+    },
+    {
+      "field": "desenlace",
+      "class": "B",
+      "included": false,
+      "reason": "Post-management outcome and model target."
+    }
+  ],
+  "dataQualityObservations": {
+    "unknownCatalogModels": 0,
+    "catalogPriceMismatches": 0,
+    "modelSalesPointAvailabilityMismatches": {
+      "records": 1073,
+      "rate": 0.487727,
+      "interpretation": "Quoted model/store context conflicts with current catalog availability; retained as source evidence, not silently corrected."
+    },
+    "unmanagedWithAppointmentRequest": {
+      "records": 45,
+      "unmanagedRecords": 179,
+      "interpretation": "Supports treating appointment timing as uncertain: an inbound request can exist even when no sales management occurred."
+    }
+  },
+  "descriptive": {
+    "totalRecords": 2200,
+    "closed": 197,
+    "lost": 1824,
+    "unmanaged": 179,
+    "overallConversionRate": 0.089545,
+    "conversionBy": {
+      "channel": [
+        {
+          "value": "META_ADS",
+          "records": 670,
+          "closed": 54,
+          "conversionRate": 0.080597
+        },
+        {
+          "value": "WEB_FORM",
+          "records": 324,
+          "closed": 29,
+          "conversionRate": 0.089506
+        },
+        {
+          "value": "WHATSAPP",
+          "records": 1206,
+          "closed": 114,
+          "conversionRate": 0.094527
+        }
+      ],
+      "company": [
+        {
+          "value": "EMP-01",
+          "records": 764,
+          "closed": 74,
+          "conversionRate": 0.096859
+        },
+        {
+          "value": "EMP-02",
+          "records": 713,
+          "closed": 60,
+          "conversionRate": 0.084151
+        },
+        {
+          "value": "EMP-03",
+          "records": 723,
+          "closed": 63,
+          "conversionRate": 0.087137
+        }
+      ],
+      "salesPoint": [
+        {
+          "value": "PV-001",
+          "records": 166,
+          "closed": 19,
+          "conversionRate": 0.114458
+        },
+        {
+          "value": "PV-002",
+          "records": 151,
+          "closed": 13,
+          "conversionRate": 0.086093
+        },
+        {
+          "value": "PV-003",
+          "records": 141,
+          "closed": 17,
+          "conversionRate": 0.120567
+        },
+        {
+          "value": "PV-004",
+          "records": 152,
+          "closed": 15,
+          "conversionRate": 0.098684
+        },
+        {
+          "value": "PV-005",
+          "records": 154,
+          "closed": 10,
+          "conversionRate": 0.064935
+        },
+        {
+          "value": "PV-006",
+          "records": 151,
+          "closed": 12,
+          "conversionRate": 0.07947
+        },
+        {
+          "value": "PV-007",
+          "records": 141,
+          "closed": 12,
+          "conversionRate": 0.085106
+        },
+        {
+          "value": "PV-008",
+          "records": 154,
+          "closed": 13,
+          "conversionRate": 0.084416
+        },
+        {
+          "value": "PV-009",
+          "records": 130,
+          "closed": 15,
+          "conversionRate": 0.115385
+        },
+        {
+          "value": "PV-010",
+          "records": 137,
+          "closed": 8,
+          "conversionRate": 0.058394
+        },
+        {
+          "value": "PV-011",
+          "records": 134,
+          "closed": 14,
+          "conversionRate": 0.104478
+        },
+        {
+          "value": "PV-012",
+          "records": 142,
+          "closed": 13,
+          "conversionRate": 0.091549
+        },
+        {
+          "value": "PV-013",
+          "records": 149,
+          "closed": 15,
+          "conversionRate": 0.100671
+        },
+        {
+          "value": "PV-014",
+          "records": 143,
+          "closed": 15,
+          "conversionRate": 0.104895
+        },
+        {
+          "value": "PV-015",
+          "records": 155,
+          "closed": 6,
+          "conversionRate": 0.03871
+        }
+      ],
+      "motorcycleModel": [
+        {
+          "value": "AKT Dynamic R3 125",
+          "records": 90,
+          "closed": 9,
+          "conversionRate": 0.1
+        },
+        {
+          "value": "AKT Evo RS 150",
+          "records": 82,
+          "closed": 8,
+          "conversionRate": 0.097561
+        },
+        {
+          "value": "AKT NKD 125",
+          "records": 97,
+          "closed": 5,
+          "conversionRate": 0.051546
+        },
+        {
+          "value": "AKT TTR 200",
+          "records": 80,
+          "closed": 4,
+          "conversionRate": 0.05
+        },
+        {
+          "value": "Bajaj Boxer CT 100",
+          "records": 94,
+          "closed": 2,
+          "conversionRate": 0.021277
+        },
+        {
+          "value": "Bajaj Discover 125",
+          "records": 90,
+          "closed": 10,
+          "conversionRate": 0.111111
+        },
+        {
+          "value": "Bajaj Dominar 400",
+          "records": 93,
+          "closed": 8,
+          "conversionRate": 0.086022
+        },
+        {
+          "value": "Bajaj Pulsar NS 125",
+          "records": 113,
+          "closed": 8,
+          "conversionRate": 0.070796
+        },
+        {
+          "value": "Bajaj Pulsar NS 160",
+          "records": 91,
+          "closed": 14,
+          "conversionRate": 0.153846
+        },
+        {
+          "value": "Bajaj Pulsar RS 200",
+          "records": 108,
+          "closed": 12,
+          "conversionRate": 0.111111
+        },
+        {
+          "value": "Hero Dash 110",
+          "records": 90,
+          "closed": 5,
+          "conversionRate": 0.055556
+        },
+        {
+          "value": "Hero Eco Deluxe 100",
+          "records": 82,
+          "closed": 8,
+          "conversionRate": 0.097561
+        },
+        {
+          "value": "Hero Hunk 160R",
+          "records": 91,
+          "closed": 8,
+          "conversionRate": 0.087912
+        },
+        {
+          "value": "Hero Xpulse 200",
+          "records": 93,
+          "closed": 8,
+          "conversionRate": 0.086022
+        },
+        {
+          "value": "Honda CB 125F Twister",
+          "records": 99,
+          "closed": 10,
+          "conversionRate": 0.10101
+        },
+        {
+          "value": "Honda CB 190R",
+          "records": 87,
+          "closed": 8,
+          "conversionRate": 0.091954
+        },
+        {
+          "value": "Honda Dio 110",
+          "records": 99,
+          "closed": 9,
+          "conversionRate": 0.090909
+        },
+        {
+          "value": "Honda Navi",
+          "records": 84,
+          "closed": 3,
+          "conversionRate": 0.035714
+        },
+        {
+          "value": "Honda XR 150L",
+          "records": 111,
+          "closed": 14,
+          "conversionRate": 0.126126
+        },
+        {
+          "value": "Honda XRE 300",
+          "records": 77,
+          "closed": 4,
+          "conversionRate": 0.051948
+        },
+        {
+          "value": "Suzuki Best 125",
+          "records": 89,
+          "closed": 11,
+          "conversionRate": 0.123596
+        },
+        {
+          "value": "Suzuki GN 125",
+          "records": 91,
+          "closed": 8,
+          "conversionRate": 0.087912
+        },
+        {
+          "value": "Suzuki Gixxer 150",
+          "records": 100,
+          "closed": 10,
+          "conversionRate": 0.1
+        },
+        {
+          "value": "Suzuki V-Strom 250",
+          "records": 69,
+          "closed": 11,
+          "conversionRate": 0.15942
+        }
+      ],
+      "declaredPaymentMethod": [
+        {
+          "value": "CASH",
+          "records": 373,
+          "closed": 41,
+          "conversionRate": 0.10992
+        },
+        {
+          "value": "CREDIT",
+          "records": 1392,
+          "closed": 107,
+          "conversionRate": 0.076868
+        },
+        {
+          "value": "UNKNOWN",
+          "records": 435,
+          "closed": 49,
+          "conversionRate": 0.112644
+        }
+      ],
+      "declaredDownPayment": [
+        {
+          "value": "NO",
+          "records": 743,
+          "closed": 60,
+          "conversionRate": 0.080754
+        },
+        {
+          "value": "UNKNOWN",
+          "records": 570,
+          "closed": 40,
+          "conversionRate": 0.070175
+        },
+        {
+          "value": "YES",
+          "records": 887,
+          "closed": 97,
+          "conversionRate": 0.109357
+        }
+      ],
+      "appointmentRequested": [
+        {
+          "value": "NO",
+          "records": 1561,
+          "closed": 127,
+          "conversionRate": 0.081358
+        },
+        {
+          "value": "YES",
+          "records": 639,
+          "closed": 70,
+          "conversionRate": 0.109546
+        }
+      ],
+      "firstContactTimeDescriptiveOnly": [
+        {
+          "value": "1-4h",
+          "records": 493,
+          "closed": 57,
+          "conversionRate": 0.115619
+        },
+        {
+          "value": "24-48h",
+          "records": 234,
+          "closed": 18,
+          "conversionRate": 0.076923
+        },
+        {
+          "value": "4-8h",
+          "records": 211,
+          "closed": 16,
+          "conversionRate": 0.075829
+        },
+        {
+          "value": "8-24h",
+          "records": 393,
+          "closed": 31,
+          "conversionRate": 0.07888
+        },
+        {
+          "value": "<=1h",
+          "records": 377,
+          "closed": 57,
+          "conversionRate": 0.151194
+        },
+        {
+          "value": ">48h",
+          "records": 313,
+          "closed": 18,
+          "conversionRate": 0.057508
+        },
+        {
+          "value": "missing/unmanaged",
+          "records": 179,
+          "closed": 0,
+          "conversionRate": 0.0
+        }
+      ]
+    }
+  },
+  "validation": {
+    "method": {
+      "folds": 5,
+      "stratified": true,
+      "randomSeed": 20260914,
+      "predictionType": "out-of-fold",
+      "rankingTieBreak": "leadId ascending"
+    },
+    "modelA": {
+      "sampleSize": 2200,
+      "positives": 197,
+      "baselineConversionRate": 0.089545,
+      "rocAuc": 0.556745,
+      "averagePrecision": 0.109499,
+      "conversionAtTop10": 0.131818,
+      "conversionAtTop20": 0.111364,
+      "liftAt10": 1.472081,
+      "liftAt20": 1.243655
+    },
+    "modelB": {
+      "sampleSize": 2021,
+      "positives": 197,
+      "baselineConversionRate": 0.097476,
+      "rocAuc": 0.53929,
+      "averagePrecision": 0.11848,
+      "conversionAtTop10": 0.137931,
+      "conversionAtTop20": 0.120988,
+      "liftAt10": 1.415018,
+      "liftAt20": 1.241198
+    },
+    "baselineComparisonModelA": {
+      "randomExpected": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.5,
+        "averagePrecision": 0.089545,
+        "conversionAtTop10": 0.089545,
+        "conversionAtTop20": 0.089545,
+        "liftAt10": 1.0,
+        "liftAt20": 1.0
+      },
+      "intakeHeuristic": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.56597,
+        "averagePrecision": 0.111845,
+        "conversionAtTop10": 0.154545,
+        "conversionAtTop20": 0.129545,
+        "liftAt10": 1.725888,
+        "liftAt20": 1.446701
+      },
+      "logisticPropensity": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.556745,
+        "averagePrecision": 0.109499,
+        "conversionAtTop10": 0.131818,
+        "conversionAtTop20": 0.111364,
+        "liftAt10": 1.472081,
+        "liftAt20": 1.243655
+      },
+      "heuristicDefinition": {
+        "requestedAppointmentYES": 2,
+        "declaredDownPaymentYES": 1,
+        "declaredPaymentMethodCASH": 1
+      }
+    }
+  },
+  "modelDecision": {
+    "chosenArtifactPopulation": "Model A: all records",
+    "reason": "It follows the primary target without silently discarding operationally real leads. Model B remains sensitivity evidence.",
+    "categoryRateHandling": "No raw store/model rate is used directly. L2 regularization shrinks one-hot category coefficients toward zero.",
+    "persistence": "Raw historical rows remain offline inputs; no PostgreSQL table is added because runtime inference only needs the versioned artifact."
+  },
+  "limitations": [
+    "Synthetic data with only 197 closures limits external validity.",
+    "Historical tabular data has limited predictive signal.",
+    "Uncertain intake fields require confirmation before production use.",
+    "Almost half of historical model/store pairs conflict with catalog availability, so inventory must remain a separate current-state component.",
+    "The heuristic was selected after descriptive inspection; it is an exploratory comparator, not an independently validated policy.",
+    "This propensity is one prioritization component, not an autonomous sales decision-maker."
+  ]
+}

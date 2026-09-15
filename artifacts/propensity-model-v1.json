@@ -1,0 +1,389 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "propensity-model-v1",
+  "trainedAt": "2026-09-14",
+  "algorithm": {
+    "name": "l2_regularized_logistic_regression",
+    "optimizer": "deterministic_batch_adam",
+    "l2Strength": 0.005,
+    "epochs": 800,
+    "randomSeed": 20260914
+  },
+  "targetDefinition": {
+    "positive": "desenlace == Cerrado",
+    "negative": "every other desenlace value",
+    "primaryPopulation": "all historical records"
+  },
+  "trainingPopulation": {
+    "records": 2200,
+    "source": "data/raw/historico_cierres.csv"
+  },
+  "featureDefinitions": [
+    {
+      "field": "lead_id",
+      "class": "A",
+      "included": false,
+      "reason": "Available identifier, but has no transferable commercial meaning."
+    },
+    {
+      "field": "fecha_registro",
+      "class": "A",
+      "included": false,
+      "reason": "Available, but excluded to avoid fragile date/season memorization in five months of synthetic data."
+    },
+    {
+      "field": "canal",
+      "class": "A",
+      "included": true,
+      "reason": "Known at lead creation."
+    },
+    {
+      "field": "empresa_id",
+      "class": "A",
+      "included": true,
+      "reason": "Known tenant context at lead creation."
+    },
+    {
+      "field": "punto_venta_id",
+      "class": "A",
+      "included": true,
+      "reason": "Known routing context at lead creation."
+    },
+    {
+      "field": "modelo_cotizado",
+      "class": "A",
+      "included": true,
+      "reason": "Quoted motorcycle is supplied as initial lead context."
+    },
+    {
+      "field": "precio_lista",
+      "class": "A",
+      "included": true,
+      "reason": "Catalog price of the quoted model is known at prioritization."
+    },
+    {
+      "field": "horas_al_primer_contacto",
+      "class": "B",
+      "included": false,
+      "reason": "Post-treatment response-time outcome; descriptive analysis only."
+    },
+    {
+      "field": "numero_contactos",
+      "class": "B",
+      "included": false,
+      "reason": "Accumulated after sales management starts."
+    },
+    {
+      "field": "manifesto_cuota_inicial",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that this declaration is captured in the inbound lead before advisor contact."
+    },
+    {
+      "field": "forma_pago_declarada",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that declared payment method is captured in the inbound lead."
+    },
+    {
+      "field": "pidio_cita",
+      "class": "C",
+      "included": true,
+      "reason": "Included under explicit assumption that appointment request is customer-provided before prioritization."
+    },
+    {
+      "field": "desenlace",
+      "class": "B",
+      "included": false,
+      "reason": "Post-management outcome and model target."
+    }
+  ],
+  "features": {
+    "categorical": [
+      {
+        "name": "channel",
+        "sourceField": "canal",
+        "categories": [
+          "META_ADS",
+          "WEB_FORM",
+          "WHATSAPP"
+        ],
+        "referenceCategory": "META_ADS",
+        "coefficients": {
+          "WEB_FORM": 0.029334159632947807,
+          "WHATSAPP": 0.11200371253250217
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "companyId",
+        "sourceField": "empresa_id",
+        "categories": [
+          "EMP-01",
+          "EMP-02",
+          "EMP-03"
+        ],
+        "referenceCategory": "EMP-01",
+        "coefficients": {
+          "EMP-02": -0.1080907789187706,
+          "EMP-03": -0.07080735379990644
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "salesPointId",
+        "sourceField": "punto_venta_id",
+        "categories": [
+          "PV-001",
+          "PV-002",
+          "PV-003",
+          "PV-004",
+          "PV-005",
+          "PV-006",
+          "PV-007",
+          "PV-008",
+          "PV-009",
+          "PV-010",
+          "PV-011",
+          "PV-012",
+          "PV-013",
+          "PV-014",
+          "PV-015"
+        ],
+        "referenceCategory": "PV-001",
+        "coefficients": {
+          "PV-002": -0.04780334088428815,
+          "PV-003": 0.13937391697778834,
+          "PV-004": -0.004147330215610353,
+          "PV-005": -0.20108254524573096,
+          "PV-006": -0.06462307520188426,
+          "PV-007": -0.006388259841079647,
+          "PV-008": -0.02568970721002413,
+          "PV-009": 0.17286657810729242,
+          "PV-010": -0.1842298783989542,
+          "PV-011": 0.11478033785772397,
+          "PV-012": 0.005307693411402263,
+          "PV-013": 0.08727762151830891,
+          "PV-014": 0.06720428329448587,
+          "PV-015": -0.3453572547088651
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "motorcycleModel",
+        "sourceField": "modelo_cotizado",
+        "categories": [
+          "AKT Dynamic R3 125",
+          "AKT Evo RS 150",
+          "AKT NKD 125",
+          "AKT TTR 200",
+          "Bajaj Boxer CT 100",
+          "Bajaj Discover 125",
+          "Bajaj Dominar 400",
+          "Bajaj Pulsar NS 125",
+          "Bajaj Pulsar NS 160",
+          "Bajaj Pulsar RS 200",
+          "Hero Dash 110",
+          "Hero Eco Deluxe 100",
+          "Hero Hunk 160R",
+          "Hero Xpulse 200",
+          "Honda CB 125F Twister",
+          "Honda CB 190R",
+          "Honda Dio 110",
+          "Honda Navi",
+          "Honda XR 150L",
+          "Honda XRE 300",
+          "Suzuki Best 125",
+          "Suzuki GN 125",
+          "Suzuki Gixxer 150",
+          "Suzuki V-Strom 250"
+        ],
+        "referenceCategory": "AKT Dynamic R3 125",
+        "coefficients": {
+          "AKT Evo RS 150": 0.06129551437226243,
+          "AKT NKD 125": -0.16141883471298354,
+          "AKT TTR 200": -0.16344615837579649,
+          "Bajaj Boxer CT 100": -0.35102587361367743,
+          "Bajaj Discover 125": 0.1269248966845444,
+          "Bajaj Dominar 400": -0.11476247462876092,
+          "Bajaj Pulsar NS 125": -0.09498893924687742,
+          "Bajaj Pulsar NS 160": 0.3070418699586019,
+          "Bajaj Pulsar RS 200": 0.0816441773085159,
+          "Hero Dash 110": -0.13710309393684614,
+          "Hero Eco Deluxe 100": 0.1021266630198123,
+          "Hero Hunk 160R": -0.02903852042038049,
+          "Hero Xpulse 200": -0.035135264113898515,
+          "Honda CB 125F Twister": 0.06084828536587424,
+          "Honda CB 190R": 0.012763795110825116,
+          "Honda Dio 110": 0.04124212008853659,
+          "Honda Navi": -0.2554047506740488,
+          "Honda XR 150L": 0.21032265056595736,
+          "Honda XRE 300": -0.21650154589223305,
+          "Suzuki Best 125": 0.16919304252592074,
+          "Suzuki GN 125": -0.0020850157416274612,
+          "Suzuki Gixxer 150": 0.07070608975922883,
+          "Suzuki V-Strom 250": 0.2132388026299363
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "declaredDownPayment",
+        "sourceField": "manifesto_cuota_inicial",
+        "categories": [
+          "NO",
+          "UNKNOWN",
+          "YES"
+        ],
+        "referenceCategory": "NO",
+        "coefficients": {
+          "UNKNOWN": -0.1292560173162983,
+          "YES": 0.2795242178475436
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "declaredPaymentMethod",
+        "sourceField": "forma_pago_declarada",
+        "categories": [
+          "CASH",
+          "CREDIT",
+          "UNKNOWN"
+        ],
+        "referenceCategory": "CASH",
+        "coefficients": {
+          "CREDIT": -0.30618066548730716,
+          "UNKNOWN": 0.04721334200852686
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      },
+      {
+        "name": "requestedAppointment",
+        "sourceField": "pidio_cita",
+        "categories": [
+          "NO",
+          "YES"
+        ],
+        "referenceCategory": "NO",
+        "coefficients": {
+          "YES": 0.27549246803226585
+        },
+        "unknownCategoryPolicy": "zero_contribution"
+      }
+    ],
+    "numeric": [
+      {
+        "name": "listPrice",
+        "sourceField": "precio_lista",
+        "mean": 10566222.727272727,
+        "scale": 5407269.690420297,
+        "coefficient": 0.0743016737316949
+      }
+    ]
+  },
+  "intercept": -2.3257694420384034,
+  "evaluation": {
+    "method": "deterministic stratified 5-fold out-of-fold validation",
+    "modelA": {
+      "sampleSize": 2200,
+      "positives": 197,
+      "baselineConversionRate": 0.089545,
+      "rocAuc": 0.556745,
+      "averagePrecision": 0.109499,
+      "conversionAtTop10": 0.131818,
+      "conversionAtTop20": 0.111364,
+      "liftAt10": 1.472081,
+      "liftAt20": 1.243655
+    },
+    "modelB": {
+      "sampleSize": 2021,
+      "positives": 197,
+      "baselineConversionRate": 0.097476,
+      "rocAuc": 0.53929,
+      "averagePrecision": 0.11848,
+      "conversionAtTop10": 0.137931,
+      "conversionAtTop20": 0.120988,
+      "liftAt10": 1.415018,
+      "liftAt20": 1.241198
+    },
+    "baselineComparisonModelA": {
+      "randomExpected": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.5,
+        "averagePrecision": 0.089545,
+        "conversionAtTop10": 0.089545,
+        "conversionAtTop20": 0.089545,
+        "liftAt10": 1.0,
+        "liftAt20": 1.0
+      },
+      "intakeHeuristic": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.56597,
+        "averagePrecision": 0.111845,
+        "conversionAtTop10": 0.154545,
+        "conversionAtTop20": 0.129545,
+        "liftAt10": 1.725888,
+        "liftAt20": 1.446701
+      },
+      "logisticPropensity": {
+        "sampleSize": 2200,
+        "positives": 197,
+        "baselineConversionRate": 0.089545,
+        "rocAuc": 0.556745,
+        "averagePrecision": 0.109499,
+        "conversionAtTop10": 0.131818,
+        "conversionAtTop20": 0.111364,
+        "liftAt10": 1.472081,
+        "liftAt20": 1.243655
+      },
+      "heuristicDefinition": {
+        "requestedAppointmentYES": 2,
+        "declaredDownPaymentYES": 1,
+        "declaredPaymentMethodCASH": 1
+      }
+    }
+  },
+  "excludedFields": [
+    {
+      "field": "lead_id",
+      "class": "A",
+      "included": false,
+      "reason": "Available identifier, but has no transferable commercial meaning."
+    },
+    {
+      "field": "fecha_registro",
+      "class": "A",
+      "included": false,
+      "reason": "Available, but excluded to avoid fragile date/season memorization in five months of synthetic data."
+    },
+    {
+      "field": "horas_al_primer_contacto",
+      "class": "B",
+      "included": false,
+      "reason": "Post-treatment response-time outcome; descriptive analysis only."
+    },
+    {
+      "field": "numero_contactos",
+      "class": "B",
+      "included": false,
+      "reason": "Accumulated after sales management starts."
+    },
+    {
+      "field": "desenlace",
+      "class": "B",
+      "included": false,
+      "reason": "Post-management outcome and model target."
+    }
+  ],
+  "limitations": [
+    "Synthetic data with only 197 closures limits external validity.",
+    "Historical tabular data has limited predictive signal.",
+    "Uncertain intake fields require confirmation before production use.",
+    "Almost half of historical model/store pairs conflict with catalog availability, so inventory must remain a separate current-state component.",
+    "The heuristic was selected after descriptive inspection; it is an exploratory comparator, not an independently validated policy.",
+    "This propensity is one prioritization component, not an autonomous sales decision-maker."
+  ]
+}

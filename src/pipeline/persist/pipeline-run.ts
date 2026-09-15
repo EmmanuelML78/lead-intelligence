@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 export type PipelineRunCounters = {
   leadsReceived: number;
@@ -53,7 +53,8 @@ export async function finalizePipelineRun(
   id: string,
   status: "SUCCESS" | "FAILED",
   counters: PipelineRunCounters,
-  failureReason?: string | null
+  failureReason?: string | null,
+  metadata?: Record<string, unknown> | null
 ) {
   return db.pipelineRun.update({
     where: { id },
@@ -61,6 +62,7 @@ export async function finalizePipelineRun(
       status,
       finishedAt: new Date(),
       failureReason: failureReason ?? null,
+      metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
       ...counters
     }
   });
