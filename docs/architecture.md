@@ -2,18 +2,25 @@
 
 ```mermaid
 flowchart TD
-  A[CSV / JSON Sources] --> B[Validation]
-  B --> C[Normalization]
-  C --> D[Customer Deduplication]
-  D --> E[(PostgreSQL)]
-  E --> F[AI Conversation Extraction]
-  E --> G[Catalog Enrichment]
-  F --> H[Hybrid Priority Engine]
-  G --> H
-  H --> I[Advisor Assignment]
-  I --> E
-  E --> J[Next.js Dashboard]
+  SRC[CSV / JSON sources] --> ING[Ingestion / validation / normalization / dedupe]
+  CAT[Motorcycle catalog — shared reference] --> ING
+  ING --> PG[(PostgreSQL)]
+  PG --> AI[AI extraction]
+  GEM[Gemini — external provider] --> AI
+  AI --> PG
+  PG --> PROP[Historical propensity artifact]
+  PROP --> HYB[Hybrid priority hybrid-v1]
+  AI --> HYB
+  CAT --> HYB
+  HYB --> PG
+  PG --> ASN[Advisor assignment]
+  ASN --> PG
+  PG --> UI[Next.js dashboard]
+  ISO[Company isolation — companyId on every commercial query] -.-> PG
+  ISO -.-> UI
 ```
+
+Gemini is an external extraction provider. Catalog inventory is shared reference data (`unitsGlobal` by SKU), not company stock. Every commercial entity and dashboard query is scoped by `companyId`.
 
 ## Core decision
 
@@ -387,39 +394,24 @@ Issue charts count `PipelineIssue` rows grouped by `type`. `reobservedRunCount` 
 
 The dashboard uses the assignment engine clock (`ASSIGNMENT_BUSINESS_DATE` or today in `America/Bogota`). If that date has no assignment rows for the selected company, it falls back to the latest persisted `assignedFor` for that company so a synthetic snapshot remains demonstrable. This does not change the assignment engine.
 
-RAW SOURCES
-     │
-     ▼
-INGESTION
-     │
-     ▼
-VALIDATION
-     │
-     ▼
-NORMALIZATION
-     │
-     ▼
-DEDUPLICATION
-     │
-     ▼
-POSTGRESQL
-     │
-     ├───────────────┐
-     ▼               ▼
-AI EXTRACTION     CATALOG
-     │               │
-     └───────┬───────┘
-             ▼
-      FEATURE ENGINEERING
-             │
-             ▼
-      PRIORITY ENGINE
-             │
-             ▼
-      ADVISOR ASSIGNMENT
-             │
-             ▼
-          DATABASE
-             │
-             ▼
-         DASHBOARD
+## Milestone 8 — production-like demo database and public deployment
+
+### Decision
+
+Keep the integrated Next.js + Prisma + pipeline architecture. Managed PostgreSQL is the only new infrastructure. Gemini stays an offline extraction provider. The public dashboard runtime does not receive `AI_API_KEY`.
+
+### Demo business date
+
+Pin `ASSIGNMENT_BUSINESS_DATE=2026-09-14`. The source snapshot is historical relative to wall-clock execution. Leaving the date unset would make capacity and assignment change every calendar day.
+
+### Assignment snapshot (choice B)
+
+`(leadId, assignedFor)` is unique. An active assignment for that business date is reused; scores changing later do not move the lead to a different advisor. For a brand-new permanent assessment database, ingest → AI → score → assign so the snapshot matches intended pipeline order. Use `PIPELINE_SKIP_SCORING` / `PIPELINE_SKIP_ASSIGNMENT` when ingesting before AI is finished. Do not delete assignment history to restage a populated database.
+
+### Health
+
+`GET /api/health` returns `{ status, database }` only.
+
+### Secrets
+
+No `NEXT_PUBLIC_*` secrets. Prisma is server-only. User-visible errors never include Prisma messages or connection strings. `.env` is gitignored; `.env.example` has placeholders only.

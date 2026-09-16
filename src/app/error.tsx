@@ -1,7 +1,8 @@
 "use client";
 
+import { DASHBOARD_UNAVAILABLE_MESSAGE } from "../lib/dashboard/errors";
+
 export default function DashboardError({
-  error,
   reset
 }: {
   error: Error & { digest?: string };
@@ -10,7 +11,7 @@ export default function DashboardError({
   return (
     <section className="panel state">
       <h2>Something went wrong</h2>
-      <p className="muted">{error.message || "The dashboard could not render this view."}</p>
+      <p className="muted">{DASHBOARD_UNAVAILABLE_MESSAGE}</p>
       <button type="button" onClick={reset}>
         Retry
       </button>

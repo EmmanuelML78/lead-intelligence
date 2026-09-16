@@ -5,17 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "pipeline": "bun run src/pipeline/run.ts",
     "analysis:propensity": "python3 analysis/train_propensity.py",
     "analysis:priority": "bun run scripts/score-distribution.ts",
     "analysis:assignment": "bun run scripts/assignment-analysis.ts",
+    "verify:counts": "bun run scripts/verify-canonical-counts.ts",
+    "verify:isolation": "bun run scripts/tenant-isolation-check.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
+    "postinstall": "prisma generate",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {

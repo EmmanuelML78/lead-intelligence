@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
+import { AiProviderError, type AiExtractionProvider, type AiExtractionProviderInput, type AiExtractionProviderOutput } from "../src/lib/ai/provider";
 import { createAiProviderFromEnv, runAiExtractionStage, type EligibleConversation } from "../src/pipeline/ai-stage";
 import { findCachedExtraction, persistAiExtraction } from "../src/pipeline/persist/ai-extractions";
 import { GeminiProvider } from "../src/lib/ai/providers/gemini";
 import { AI_PROMPT_VERSION } from "../src/lib/ai/prompt";
-import type { AiExtractionProvider, AiExtractionProviderInput, AiExtractionProviderOutput } from "../src/lib/ai/provider";
 import { conversationHash as conversationHashFor, type TranscriptMessage } from "../src/lib/ai/transcript";
 
 /**
@@ -273,4 +273,57 @@ test("provider and validation failures are counted and recorded as PipelineIssue
   assert.equal(report.validationFailures, 1);
   assert.equal(rows.length, 0, "malformed extraction is never persisted as valid data");
   assert.equal(issues[0]?.type, "AI_EXTRACTION_VALIDATION_FAILED");
+});
+
+test("AI_MAX_CONVERSATIONS defers remaining eligible conversations without calling the provider", async () => {
+  const { db, rows } = createFakeDb();
+  const provider = new CountingProvider("model-a");
+  const eligible: EligibleConversation[] = [
+    { conversationId: "CONV-1", leadId: "LD-1", messages },
+    { conversationId: "CONV-2", leadId: "LD-2", messages },
+    { conversationId: "CONV-3", leadId: "LD-3", messages }
+  ];
+
+  const { report } = await runAiExtractionStage(db, eligible, catalog, {
+    env: { AI_MAX_CONVERSATIONS: "1", AI_CONCURRENCY: "1" },
+    provider
+  });
+
+  assert.equal(report.conversationsEligible, 3);
+  assert.equal(report.skippedDueToLimit, 2);
+  assert.equal(report.modelCalls, 1);
+  assert.equal(report.successes, 1);
+  assert.equal(provider.callCount, 1);
+  assert.equal(rows.length, 1);
+});
+
+test("quota/rate-limit provider errors stop remaining work instead of looping the batch", async () => {
+  const { db, rows } = createFakeDb();
+  const quotaProvider: AiExtractionProvider = {
+    name: "fake",
+    model: "model-a",
+    async extract() {
+      throw new AiProviderError("Gemini request failed with status 429: RESOURCE_EXHAUSTED quota", {
+        retryable: false
+      });
+    }
+  };
+  const eligible: EligibleConversation[] = [
+    { conversationId: "CONV-1", leadId: "LD-1", messages },
+    { conversationId: "CONV-2", leadId: "LD-2", messages },
+    { conversationId: "CONV-3", leadId: "LD-3", messages }
+  ];
+
+  const { report, issues } = await runAiExtractionStage(db, eligible, catalog, {
+    env: { AI_CONCURRENCY: "1" },
+    provider: quotaProvider
+  });
+
+  assert.equal(report.status, "STOPPED");
+  assert.equal(report.providerFailures, 1);
+  assert.equal(report.skippedDueToQuota, 2);
+  assert.equal(report.modelCalls, 1);
+  assert.equal(rows.length, 0);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0]?.type, "AI_EXTRACTION_PROVIDER_FAILED");
 });

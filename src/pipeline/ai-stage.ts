@@ -20,7 +20,7 @@ export type EligibleConversation = {
 };
 
 export type AiStageReport = {
-  status: "SKIPPED" | "COMPLETED";
+  status: "SKIPPED" | "COMPLETED" | "STOPPED";
   reason: string | null;
   conversationsEligible: number;
   cacheHits: number;
@@ -29,6 +29,8 @@ export type AiStageReport = {
   validationFailures: number;
   providerFailures: number;
   skippedNoApiKey: number;
+  skippedDueToLimit: number;
+  skippedDueToQuota: number;
   provider: string | null;
   model: string | null;
   promptVersion: string;
@@ -45,11 +47,24 @@ function emptyReport(overrides: Partial<AiStageReport>): AiStageReport {
     validationFailures: 0,
     providerFailures: 0,
     skippedNoApiKey: 0,
+    skippedDueToLimit: 0,
+    skippedDueToQuota: 0,
     provider: null,
     model: null,
     promptVersion: AI_PROMPT_VERSION,
     ...overrides
   };
+}
+
+export function isQuotaOrRateLimitError(message: string): boolean {
+  return /(?:\b429\b|RESOURCE_EXHAUSTED|quota|rate[\s_-]?limit)/i.test(message);
+}
+
+function parseNonNegativeInt(raw: string | undefined): number | null {
+  if (!raw?.trim()) return null;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return value;
 }
 
 export type AiProviderEnv = NodeJS.Dict<string | undefined>;
@@ -100,15 +115,28 @@ export async function runAiExtractionStage(
     };
   }
 
-  const concurrency = Number.parseInt(options.env.AI_CONCURRENCY ?? "", 10) || DEFAULT_CONCURRENCY;
+  const concurrency = parseNonNegativeInt(options.env.AI_CONCURRENCY) || DEFAULT_CONCURRENCY;
+  const maxConversations = parseNonNegativeInt(options.env.AI_MAX_CONVERSATIONS);
+  const queued =
+    maxConversations === null || maxConversations >= eligible.length
+      ? eligible
+      : eligible.slice(0, maxConversations);
+  const skippedDueToLimit = eligible.length - queued.length;
   const issues: PipelineIssueInput[] = [];
   let cacheHits = 0;
   let modelCalls = 0;
   let successes = 0;
   let validationFailures = 0;
   let providerFailures = 0;
+  let skippedDueToQuota = 0;
+  let stopFurtherCalls = false;
 
-  await mapWithConcurrency(eligible, concurrency, async (conversation) => {
+  await mapWithConcurrency(queued, concurrency, async (conversation) => {
+    if (stopFurtherCalls) {
+      skippedDueToQuota += 1;
+      return;
+    }
+
     const hash = conversationHash(conversation.messages);
     const cached = await findCachedExtraction(db, {
       conversationId: conversation.conversationId,
@@ -140,6 +168,9 @@ export async function runAiExtractionStage(
         entityId: conversation.conversationId,
         message: `AI extraction for conversation ${conversation.conversationId} failed after ${result.attempts} attempt(s): ${result.message}`
       });
+      if (isQuotaOrRateLimitError(result.message)) {
+        stopFurtherCalls = true;
+      }
       return;
     }
 
@@ -168,15 +199,27 @@ export async function runAiExtractionStage(
     successes += 1;
   });
 
+  const stopped = stopFurtherCalls;
+  const reasonParts: string[] = [];
+  if (skippedDueToLimit > 0) {
+    reasonParts.push(`AI_MAX_CONVERSATIONS=${maxConversations}; ${skippedDueToLimit} eligible conversation(s) deferred.`);
+  }
+  if (stopped) {
+    reasonParts.push("Stopped after quota/rate-limit errors so remaining conversations are not billed in a retry loop.");
+  }
+
   return {
     report: emptyReport({
-      status: "COMPLETED",
+      status: stopped ? "STOPPED" : "COMPLETED",
+      reason: reasonParts.join(" ") || null,
       conversationsEligible: eligible.length,
       cacheHits,
       modelCalls,
       successes,
       validationFailures,
       providerFailures,
+      skippedDueToLimit,
+      skippedDueToQuota,
       provider: provider.name,
       model: provider.model
     }),

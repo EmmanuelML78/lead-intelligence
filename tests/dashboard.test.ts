@@ -10,6 +10,7 @@ import {
   presentConversationMessage,
   presentSla
 } from "../src/lib/dashboard/present";
+import { publicDashboardError, DASHBOARD_UNAVAILABLE_MESSAGE } from "../src/lib/dashboard/errors";
 import { leadScopeWhere } from "../src/lib/dashboard/queries";
 import { MissingCompanyIdError, requireCompanyId } from "../src/lib/dashboard/tenant";
 
@@ -184,4 +185,10 @@ test("SLA copy uses urgency bucket rather than raw enums", () => {
   });
   assert.equal(sla.label, "Critical (24h+ uncontacted)");
   assert.equal(sla.ageLabel, "1d 12h");
+});
+
+test("dashboard errors never echo Prisma or connection details to users", () => {
+  const leaked = new Error("Can't reach database server at postgresql://user:secret@host/db");
+  assert.equal(publicDashboardError(leaked), DASHBOARD_UNAVAILABLE_MESSAGE);
+  assert.doesNotMatch(publicDashboardError(leaked), /postgresql|secret|host/i);
 });

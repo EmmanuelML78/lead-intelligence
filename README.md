@@ -2,6 +2,10 @@
 
 MVP for the Analista IA technical assessment. It turns raw multi-channel leads into an explainable, prioritized daily workload per advisor.
 
+**Public demo URL:** not deployed yet (Vercel + managed Postgres still need account actions — see Deployment).
+
+The company dropdown is **demo tenant context, not production authentication**. Dataset is synthetic. No real PII.
+
 ## Business goal
 
 Prioritize scarce commercial capacity using four signals:
@@ -11,6 +15,32 @@ Prioritize scarce commercial capacity using four signals:
 3. operational urgency based on how long a lead has been waiting;
 4. global catalog availability for the resolved motorcycle model.
 
+## Architecture
+
+```mermaid
+flowchart TD
+  SRC[CSV / JSON sources] --> ING[Ingestion / normalization / dedupe]
+  CAT[Catalog reference data] --> ING
+  ING --> PG[(PostgreSQL)]
+  PG --> AI[AI extraction]
+  GEM[Gemini — external provider] --> AI
+  AI --> PG
+  PG --> PROP[Historical propensity]
+  PROP --> HYB[Hybrid priority]
+  AI --> HYB
+  CAT --> HYB
+  HYB --> PG
+  PG --> ASN[Advisor assignment]
+  ASN --> PG
+  PG --> UI[Next.js dashboard]
+  ISO[Company isolation] -.-> PG
+  ISO -.-> UI
+```
+
+Stack: Next.js, TypeScript, Bun, PostgreSQL, Prisma, Zod. Gemini is an offline extraction provider, not a scoring engine. No microservices, queues, Redis, or vector DB.
+
+Full design: `docs/architecture.md`.
+
 ## Pipeline
 
 ```text
@@ -19,25 +49,80 @@ sources -> validation -> normalization -> deduplication -> database
         -> capacity-aware advisor assignment -> dashboard
 ```
 
-## Key design decisions
-
-- The LLM extracts structured facts; it does not decide the final score.
-- Customer deduplication is scoped by company.
-- Raw values are retained for auditability.
-- Ambiguous dates are flagged instead of silently treated as certain.
-- Orphan conversations are quarantined instead of crashing the pipeline.
-- Scoring is versioned and explainable.
+The LLM extracts structured facts; it does not decide the final score. Customer deduplication is scoped by company. Raw values are retained. Ambiguous dates are flagged. Orphan conversations are quarantined. Scoring is versioned and explainable.
 
 ## Quick start
 
 ```bash
-cp .env.example .env   # set a real DATABASE_URL
+cp .env.example .env   # set DATABASE_URL; keep ASSIGNMENT_BUSINESS_DATE=2026-09-14
 bun install
 bun run db:generate
-bunx prisma migrate deploy   # applies the prepared migrations in prisma/migrations
-bun run pipeline
-bun run dev                 # operational dashboard at http://localhost:3000
+bun run db:migrate:deploy   # versioned migrations; never prisma db push
+bun run pipeline            # ingest → AI (or SKIPPED) → score → assign
+bun run dev                 # dashboard at http://localhost:3000
 ```
+
+`ASSIGNMENT_BUSINESS_DATE=2026-09-14` is the pinned assessment-demo calendar date (America/Bogota, stored as UTC midnight). The synthetic snapshot is historical; pinning keeps capacity and assignment stable during evaluation. Do not let the public demo drift with wall-clock “today”.
+
+The `pipeline` command is idempotent. Pipeline/data loading is an explicit setup command — the dashboard never reads `data/raw` at runtime.
+
+### Environment variables
+
+| Variable | Pipeline | Dashboard runtime | Notes |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | required | required | Server-only. Pooled URL is fine on Vercel; use a **direct** URL for `db:migrate:deploy`. |
+| `ASSIGNMENT_BUSINESS_DATE` | required for a stable demo | required for a stable demo | Pin `2026-09-14`. |
+| `BUSINESS_TIMEZONE` | optional | optional | Default `America/Bogota`. |
+| `AI_API_KEY` | optional | **not used** | Empty → AI stage `SKIPPED`; ingestion still succeeds. Do **not** put this on Vercel. |
+| `AI_MODEL` | optional | not used | Default `gemini-3.6-flash`. |
+| `AI_CONCURRENCY` | optional | not used | Default `4`. |
+| `AI_MAX_CONVERSATIONS` | optional | not used | Cap provider calls (e.g. `5` for a live smoke batch). |
+| `AI_PROVIDER` | unused (Gemini only) | not used | Documented name. |
+| `PIPELINE_SKIP_SCORING` | optional | not used | `1` skips scoring. |
+| `PIPELINE_SKIP_ASSIGNMENT` | optional | not used | `1` skips assignment. |
+
+Never use `NEXT_PUBLIC_*` for secrets. `.env` is gitignored. `.env.example` has placeholders only.
+
+### Brand-new database ordering (assignment choice B)
+
+Existing assignments for a business date are **idempotent**: an active row is reused and will **not** silently move to another advisor merely because scores changed after a later AI batch.
+
+For a clean assessment snapshot, prefer **B**: ingest → AI → score → assign on an empty database.
+
+```bash
+# 1. ingest only (AI skipped if no key; do not freeze assignments yet)
+PIPELINE_SKIP_SCORING=1 PIPELINE_SKIP_ASSIGNMENT=1 bun run pipeline
+
+# 2. small live AI batch, then full eligible set (665 tenant-linked conversations)
+AI_MAX_CONVERSATIONS=5 bun run pipeline   # still skip score/assign if you have not finished AI
+# then unset AI_MAX_CONVERSATIONS and rerun; cache prevents paying twice
+
+# 3. score then assign once AI is complete
+bun run analysis:priority
+bun run analysis:assignment
+```
+
+Or run a single `bun run pipeline` with `AI_API_KEY` set after a throwaway smoke test — that is the same order in one process.
+
+Do not delete production-like assignment history to “fix” a pre-AI snapshot. Rebuild from a fresh DB instead.
+
+## Deployment
+
+Target: **Vercel** (Next.js) + **managed PostgreSQL** (Neon or equivalent) via `DATABASE_URL`.
+
+Configure on Vercel (Production):
+
+- `DATABASE_URL` — required
+- `ASSIGNMENT_BUSINESS_DATE=2026-09-14` — required for a stable demo
+- `BUSINESS_TIMEZONE=America/Bogota` — recommended
+
+Do **not** set `AI_API_KEY` on Vercel. The dashboard only reads Postgres. Gemini stays an offline pipeline step.
+
+Health: `GET /api/health` → `{ "status": "ok", "database": "reachable" }` (or 503). No secrets, versions, or counts.
+
+Migrations: `bun run db:migrate:deploy` (`prisma migrate deploy`). Never `prisma db push` in production.
+
+Public URL will be recorded here after the Vercel project exists.
 
 The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → **capacity-aware advisor assignment** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`).
 
@@ -159,22 +244,21 @@ The company dropdown is **demo tenant context, not production IAM**. It sets an 
 
 **Limitations**
 
-- No identity-provider login, roles, or audit of who switched company.
+- Company selector is demo tenant context, **not** production IAM: no identity-provider login, roles, or audit of who switched company.
 - Dashboard KPIs are company-scoped, so they will not match the global snapshot totals (1,352 eligible / 391 CRITICAL / …) unless you mentally sum companies.
-- Assignment date follows `ASSIGNMENT_BUSINESS_DATE` when set; otherwise today’s America/Bogota date, falling back to the latest persisted assignment date for the selected company so a snapshot remains demonstrable.
-- Deployment is not part of this milestone.
+- Assignment date follows `ASSIGNMENT_BUSINESS_DATE` (pinned `2026-09-14` for the public demo).
+- Synthetic dataset only — no real personal data.
+- AI extraction is an offline pipeline step. The public dashboard does not call Gemini.
 
 ### Database migrations
 
-Migrations are prepared under `prisma/migrations/` using Prisma's migration format. Because this repository is developed without a live `DATABASE_URL` in some environments, the initial migration was generated with `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script` (which only needs the schema file, not a live connection) rather than `prisma migrate dev`. Once `DATABASE_URL` points at a real Postgres instance:
+Migrations live under `prisma/migrations/`. Apply them with versioned deploy, never `prisma db push`:
 
 ```bash
-bunx prisma migrate deploy   # apply the prepared migration to a fresh database
+bun run db:migrate:deploy
 bun run pipeline
 bun run pipeline              # rerun to verify idempotency
 ```
-
-`prisma db push` is not used as the schema management strategy.
 
 ### Data-quality metric semantics
 

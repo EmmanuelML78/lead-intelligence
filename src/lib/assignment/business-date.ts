@@ -1,5 +1,13 @@
 export const BUSINESS_TIMEZONE = "America/Bogota";
 
+/**
+ * Pinned assessment-demo calendar date. The synthetic snapshot is historical
+ * relative to wall-clock execution; pinning ASSIGNMENT_BUSINESS_DATE to this
+ * value keeps capacity and assignment stable during evaluation.
+ * The engine still uses "today in BUSINESS_TIMEZONE" when the env var is unset.
+ */
+export const DEMO_ASSIGNMENT_BUSINESS_DATE = "2026-09-14";
+
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export type AssignmentClock = {

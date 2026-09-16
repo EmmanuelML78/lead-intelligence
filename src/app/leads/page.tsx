@@ -2,6 +2,7 @@ import type { LeadChannel, PriorityBand } from "@prisma/client";
 import { LeadFilters } from "../../components/dashboard/lead-filters";
 import { LeadQueueTable } from "../../components/dashboard/lead-queue-table";
 import { EmptyState, ErrorState } from "../../components/dashboard/states";
+import { publicDashboardError } from "../../lib/dashboard/errors";
 import { prisma } from "../../lib/db/client";
 import { listLeadQueue } from "../../lib/dashboard/queries";
 import { loadDashboardTenant } from "../../lib/dashboard/session";
@@ -98,6 +99,6 @@ export default async function LeadsPage({
       </>
     );
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : "Database unavailable."} />;
+    return <ErrorState message={publicDashboardError(error)} />;
   }
 }

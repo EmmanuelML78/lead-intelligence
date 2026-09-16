@@ -170,16 +170,37 @@ async function main() {
 
     // 8. hybrid operational priority scoring --------------------------------
     // Uses persisted/cached AI extractions only. It never invokes Gemini.
-    const { report: scoringReport, issues: scoringIssues } = await runScoringStage(prisma);
-    issues.push(...scoringIssues);
-    printScoringStageSummary(scoringReport);
+    // PIPELINE_SKIP_SCORING lets a brand-new DB ingest (and optionally AI)
+    // before scoring/assignment so the demo snapshot follows ingest → AI →
+    // score → assign instead of freezing pre-AI assignments.
+    const skipScoring = envFlag("PIPELINE_SKIP_SCORING");
+    let scoringReport: ScoringStageReport | { status: "SKIPPED"; reason: string };
+    if (skipScoring) {
+      scoringReport = { status: "SKIPPED", reason: "PIPELINE_SKIP_SCORING is set." };
+      console.log("\nHybrid priority scoring stage: SKIPPED");
+      console.log(scoringReport.reason);
+    } else {
+      const scored = await runScoringStage(prisma);
+      issues.push(...scored.issues);
+      scoringReport = scored.report;
+      printScoringStageSummary(scored.report);
+    }
 
     // 9. advisor assignment -------------------------------------------------
     // Consumes persisted hybrid-v1 scores. Never invokes Gemini. Business
     // date is explicit (ASSIGNMENT_BUSINESS_DATE) or America/Bogota today.
-    const { report: assignmentReport, issues: assignmentIssues } = await runAssignmentStage(prisma);
-    issues.push(...assignmentIssues);
-    printAssignmentStageSummary(assignmentReport);
+    const skipAssignment = envFlag("PIPELINE_SKIP_ASSIGNMENT");
+    let assignmentReport: AssignmentStageReport | { status: "SKIPPED"; reason: string };
+    if (skipAssignment) {
+      assignmentReport = { status: "SKIPPED", reason: "PIPELINE_SKIP_ASSIGNMENT is set." };
+      console.log("\nAdvisor assignment stage: SKIPPED");
+      console.log(assignmentReport.reason);
+    } else {
+      const assigned = await runAssignmentStage(prisma);
+      issues.push(...assigned.issues);
+      assignmentReport = assigned.report;
+      printAssignmentStageSummary(assigned.report);
+    }
 
     // 10. record issues (deduplicated by fingerprint) -------------------------
     counters.warnings = issues.filter((i) => i.severity === "WARNING").length;
@@ -202,6 +223,11 @@ async function main() {
   }
 }
 
+function envFlag(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 function printSummary(counters: PipelineRunCounters, pipelineRunId: string) {
   console.log("\nLead Intelligence — pipeline run", pipelineRunId, "\n");
   console.table(counters);
@@ -218,7 +244,9 @@ function printAiStageSummary(report: AiStageReport) {
     successes: report.successes,
     validationFailures: report.validationFailures,
     providerFailures: report.providerFailures,
-    skippedNoApiKey: report.skippedNoApiKey
+    skippedNoApiKey: report.skippedNoApiKey,
+    skippedDueToLimit: report.skippedDueToLimit,
+    skippedDueToQuota: report.skippedDueToQuota
   });
 }
 

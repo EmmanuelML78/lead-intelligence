@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { CompanySelector } from "../components/dashboard/company-selector";
 import { DashboardNav } from "../components/dashboard/nav";
 import { ErrorState } from "../components/dashboard/states";
+import { publicDashboardError } from "../lib/dashboard/errors";
 import { loadDashboardTenant } from "../lib/dashboard/session";
 import "./globals.css";
 
@@ -25,7 +26,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     companies = tenant.companies;
     selected = tenant.selected;
   } catch (error) {
-    tenantError = error instanceof Error ? error.message : "Database unavailable.";
+    tenantError = publicDashboardError(error);
   }
 
   return (

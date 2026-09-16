@@ -1,5 +1,6 @@
 import { DataQualityPanel } from "../../components/dashboard/data-quality-panel";
 import { ErrorState } from "../../components/dashboard/states";
+import { publicDashboardError } from "../../lib/dashboard/errors";
 import { prisma } from "../../lib/db/client";
 import { getDataQuality } from "../../lib/dashboard/queries";
 
@@ -21,6 +22,6 @@ export default async function DataQualityPage() {
       </>
     );
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : "Database unavailable."} />;
+    return <ErrorState message={publicDashboardError(error)} />;
   }
 }

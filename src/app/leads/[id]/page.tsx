@@ -4,6 +4,7 @@ import { AssignmentPanel } from "../../../components/dashboard/assignment-panel"
 import { ConversationThread } from "../../../components/dashboard/conversation-thread";
 import { ScoreBreakdown } from "../../../components/dashboard/score-breakdown";
 import { ErrorState } from "../../../components/dashboard/states";
+import { publicDashboardError } from "../../../lib/dashboard/errors";
 import { prisma } from "../../../lib/db/client";
 import { channelLabel, statusLabel } from "../../../lib/dashboard/present";
 import { getLeadDetail } from "../../../lib/dashboard/queries";
@@ -20,7 +21,7 @@ export default async function LeadDetailPage({
   try {
     tenant = await loadDashboardTenant();
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : "Database unavailable."} />;
+    return <ErrorState message={publicDashboardError(error)} />;
   }
   if (!tenant.selected) notFound();
 
@@ -29,7 +30,7 @@ export default async function LeadDetailPage({
     const { id } = await params;
     lead = await getLeadDetail(prisma, tenant.selected.id, id);
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : "Database unavailable."} />;
+    return <ErrorState message={publicDashboardError(error)} />;
   }
   if (!lead) notFound();
 
