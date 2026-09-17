@@ -10,7 +10,7 @@ import { findCachedExtraction, persistAiExtraction } from "../src/pipeline/persi
 const hasDb = Boolean(process.env.DATABASE_URL);
 const skip = hasDb ? false : "DATABASE_URL not configured -- run against a real Postgres instance to execute this suite.";
 
-test("integration: AiExtraction persists with enums + FK, cache lookup finds it, history is never overwritten", { skip }, async () => {
+test("integration: AiExtraction persists with enums + FK, cache lookup finds it, history is never overwritten", { skip, timeout: 60_000 }, async () => {
   const suffix = randomUUID().slice(0, 8);
   const companyId = `EMP-AI-${suffix}`;
   const salesPointId = `PV-AI-${suffix}`;

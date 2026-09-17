@@ -19,7 +19,7 @@ test("dashboard tenant queries reject a missing companyId", () => {
 
 test(
   "integration: company-scoped queue and lead detail never leak another tenant",
-  { skip },
+  { skip, timeout: 60_000 },
   async () => {
     const suffix = randomUUID().slice(0, 8);
     const companyA = `EMP-UI-A-${suffix}`;

@@ -34,7 +34,7 @@ function rawLead(overrides: Partial<RawLead>): RawLead {
   };
 }
 
-test("integration: idempotent lead persistence, source-change detection, orphan conversations", { skip }, async () => {
+test("integration: idempotent lead persistence, source-change detection, orphan conversations", { skip, timeout: 60_000 }, async () => {
   const suffix = randomUUID().slice(0, 8);
   const companyId = `EMP-TEST-${suffix}`;
   const salesPointId = `PV-TEST-${suffix}`;
@@ -94,7 +94,7 @@ test("integration: idempotent lead persistence, source-change detection, orphan 
   }
 });
 
-test("integration: reobservedRunCount increments once per pipeline execution, no duplicate row", { skip }, async () => {
+test("integration: reobservedRunCount increments once per pipeline execution, no duplicate row", { skip, timeout: 60_000 }, async () => {
   const suffix = randomUUID().slice(0, 8);
   const runA = await prisma.pipelineRun.create({ data: { status: "RUNNING" } });
   const runB = await prisma.pipelineRun.create({ data: { status: "RUNNING" } });

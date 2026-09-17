@@ -2,7 +2,7 @@
 
 MVP for the Analista IA technical assessment. It turns raw multi-channel leads into an explainable, prioritized daily workload per advisor.
 
-**Public demo URL:** not deployed yet (Vercel + managed Postgres still need account actions — see Deployment).
+**Public demo URL:** [https://lead-intelligence-iota.vercel.app](https://lead-intelligence-iota.vercel.app)
 
 The company dropdown is **demo tenant context, not production authentication**. Dataset is synthetic. No real PII.
 
@@ -122,9 +122,19 @@ Health: `GET /api/health` → `{ "status": "ok", "database": "reachable" }` (or 
 
 Migrations: `bun run db:migrate:deploy` (`prisma migrate deploy`). Never `prisma db push` in production.
 
-Public URL will be recorded here after the Vercel project exists.
+Public URL: [https://lead-intelligence-iota.vercel.app](https://lead-intelligence-iota.vercel.app)
 
 The `pipeline` command runs the implemented flow end to end: read → validate → normalize → persist reference data → resolve customers → persist leads → persist conversations/messages → **AI conversation extraction** → **hybrid priority scoring** → **capacity-aware advisor assignment** → record data-quality issues → finalize the `PipelineRun`. Rerunning it is idempotent (see `docs/architecture.md`).
+
+### Assessment limitation — AI coverage under provider quota
+
+Gemini free-tier quota limited full-batch extraction of the 665 tenant-linked conversations. That is graceful degradation, not a scoring or assignment failure.
+
+- The architecture already supports **versioned, cached** AI extraction (`conversationId`, `conversationHash`, `promptVersion`, `model`, `extractionVersion`). Successful rows are reused; history is never overwritten.
+- Leads without a persisted `AiExtraction` use the **documented neutral intent fallback** (`UNKNOWN` intent, component 40). The LLM never invents a score, and missing extraction is never fabricated.
+- Ingestion, hybrid-v1, advisor assignment, and the dashboard remain functional when the AI stage is skipped, stopped by quota, or only partially complete.
+- The public dashboard does not call Gemini. Lead detail shows the explicit empty state (`No AI extraction available for this conversation.`) rather than pretending the conversation was processed.
+- In a production setting, higher provider quota or asynchronous/offline extraction can increase AI coverage **without changing** hybrid-v1 weights, priority bands, or assignment rules.
 
 ### AI conversation extraction (Milestone 3)
 

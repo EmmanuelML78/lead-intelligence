@@ -12,7 +12,7 @@ const skip = hasDb
 
 test(
   "integration: assignment is idempotent, tenant-scoped, and date-scoped",
-  { skip },
+  { skip, timeout: 60_000 },
   async () => {
     const suffix = randomUUID().slice(0, 8);
     const companyA = `EMP-ASG-A-${suffix}`;

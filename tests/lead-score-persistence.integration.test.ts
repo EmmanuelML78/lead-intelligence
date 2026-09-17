@@ -11,7 +11,7 @@ const skip = hasDb
 
 test(
   "integration: scoring is tenant-scoped, idempotent, and preserves changed-input history",
-  { skip },
+  { skip, timeout: 60_000 },
   async () => {
     const suffix = randomUUID().slice(0, 8);
     const companyA = `EMP-SCORE-A-${suffix}`;

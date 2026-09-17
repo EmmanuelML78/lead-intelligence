@@ -415,3 +415,13 @@ Pin `ASSIGNMENT_BUSINESS_DATE=2026-09-14`. The source snapshot is historical rel
 ### Secrets
 
 No `NEXT_PUBLIC_*` secrets. Prisma is server-only. User-visible errors never include Prisma messages or connection strings. `.env` is gitignored; `.env.example` has placeholders only.
+
+### Assessment limitation — AI coverage under provider quota
+
+The public demo is scored and assigned against a permanent managed Postgres. Gemini free-tier quota limited full-batch extraction of eligible WhatsApp conversations. The system degrades gracefully:
+
+- Cached, versioned `AiExtraction` rows are used when present.
+- Missing extraction uses the documented neutral intent fallback. No fabricated commercial intelligence.
+- Hybrid-v1 weights/bands and assignment rules are unchanged.
+- The dashboard runtime never receives `AI_API_KEY` and shows an explicit empty AI state.
+- Higher quota or async extraction can raise coverage later without an architecture change.
