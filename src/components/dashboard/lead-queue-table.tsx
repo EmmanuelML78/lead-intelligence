@@ -13,67 +13,51 @@ export function LeadQueueTable({ rows }: { rows: QueueLeadRow[] }) {
   }
 
   return (
-    <>
-      <div className="table-wrap">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Priority</th>
-              <th>Lead / customer</th>
-              <th>Sales point</th>
-              <th>Channel</th>
-              <th>Motorcycle</th>
-              <th>Age / SLA</th>
-              <th>AI intent</th>
-              <th>Advisor</th>
-              <th>Assignment</th>
+    <div className="table-wrap">
+      <table className="data">
+        <thead>
+          <tr>
+            <th>Priority</th>
+            <th>Lead / customer</th>
+            <th>Sales point</th>
+            <th>Channel</th>
+            <th>Motorcycle</th>
+            <th>Age / SLA</th>
+            <th>AI intent</th>
+            <th>Advisor</th>
+            <th>Assignment</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.leadId} className="lead-row">
+              <td data-label="Priority">
+                <PriorityBadge band={row.priorityBand} />
+                <div className="mono muted">{formatScore(row.totalScore)}</div>
+              </td>
+              <td data-label="Lead / customer">
+                <Link href={`/leads/${row.leadId}`}>
+                  <strong>{row.customerName}</strong>
+                  <div className="muted mono">{row.leadId}</div>
+                </Link>
+              </td>
+              <td data-label="Sales point">
+                {row.salesPointId}
+                <div className="muted">{row.companyId}</div>
+              </td>
+              <td data-label="Channel">{channelLabel(row.channel)}</td>
+              <td data-label="Motorcycle">{row.motorcycle}</td>
+              <td data-label="Age / SLA">
+                {row.sla.ageLabel}
+                <div className="muted">{row.sla.label}</div>
+              </td>
+              <td data-label="AI intent">{row.aiIntent ? purchaseIntentLabel(row.aiIntent) : "—"}</td>
+              <td data-label="Advisor">{row.assignment.advisorName ?? "—"}</td>
+              <td data-label="Assignment">{row.assignment.explanation}</td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.leadId}>
-                <td>
-                  <PriorityBadge band={row.priorityBand} />
-                  <div className="mono muted">{formatScore(row.totalScore)}</div>
-                </td>
-                <td>
-                  <Link href={`/leads/${row.leadId}`}>
-                    <strong>{row.customerName}</strong>
-                    <div className="muted">{row.leadId}</div>
-                  </Link>
-                </td>
-                <td>
-                  {row.salesPointId}
-                  <div className="muted">{row.companyId}</div>
-                </td>
-                <td>{channelLabel(row.channel)}</td>
-                <td>{row.motorcycle}</td>
-                <td>
-                  {row.sla.ageLabel}
-                  <div className="muted">{row.sla.label}</div>
-                </td>
-                <td>{row.aiIntent ? purchaseIntentLabel(row.aiIntent) : "—"}</td>
-                <td>{row.assignment.advisorName ?? "—"}</td>
-                <td>{row.assignment.explanation}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="lead-cards">
-        {rows.map((row) => (
-          <Link key={row.leadId} href={`/leads/${row.leadId}`} className="lead-card">
-            <div>
-              <PriorityBadge band={row.priorityBand} /> {formatScore(row.totalScore)}
-            </div>
-            <strong>{row.customerName}</strong>
-            <div className="muted">
-              {row.salesPointId} · {channelLabel(row.channel)} · {row.motorcycle}
-            </div>
-            <div>{row.assignment.explanation}</div>
-          </Link>
-        ))}
-      </div>
-    </>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

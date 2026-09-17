@@ -7,13 +7,13 @@ export function CapacityBoard({ snapshot }: { snapshot: CapacitySnapshot }) {
   }
 
   return (
-    <div className="grid-2" style={{ gridTemplateColumns: "1fr" }}>
+    <div className="pool-list">
       {snapshot.pools.map((pool) => (
         <section key={pool.salesPointId} className={`panel pool${pool.saturated ? " saturated" : ""}`}>
           <div className="score-hero">
             <div>
               <div className="eyebrow">{pool.saturated ? "Saturated pool" : "Sales point"}</div>
-              <h2 style={{ margin: "0.15rem 0" }}>{pool.salesPointId}</h2>
+              <h2>{pool.salesPointId}</h2>
             </div>
             <div className="mono">{formatPercent(pool.utilization)} utilized</div>
           </div>
@@ -43,7 +43,7 @@ export function CapacityBoard({ snapshot }: { snapshot: CapacitySnapshot }) {
           {pool.advisors.length === 0 ? (
             <p className="muted">No active advisors at this sales point.</p>
           ) : (
-            <div className="table-wrap" style={{ marginTop: "0.85rem" }}>
+            <div className="table-wrap advisor-table">
               <table className="data">
                 <thead>
                   <tr>
@@ -56,10 +56,10 @@ export function CapacityBoard({ snapshot }: { snapshot: CapacitySnapshot }) {
                 <tbody>
                   {pool.advisors.map((advisor) => (
                     <tr key={advisor.advisorId}>
-                      <td>{advisor.name}</td>
-                      <td>{advisor.assignedToday}</td>
-                      <td>{advisor.dailyCapacity}</td>
-                      <td>{formatPercent(advisor.utilization)}</td>
+                      <td data-label="Advisor">{advisor.name}</td>
+                      <td data-label="Assigned today">{advisor.assignedToday}</td>
+                      <td data-label="Daily capacity">{advisor.dailyCapacity}</td>
+                      <td data-label="Utilization">{formatPercent(advisor.utilization)}</td>
                     </tr>
                   ))}
                 </tbody>

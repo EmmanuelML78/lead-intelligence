@@ -1,5 +1,6 @@
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Inter } from "next/font/google";
+import { Archivo, IBM_Plex_Mono } from "next/font/google";
 import { CompanySelector } from "../components/dashboard/company-selector";
 import { DashboardNav } from "../components/dashboard/nav";
 import { ErrorState } from "../components/dashboard/states";
@@ -7,13 +8,31 @@ import { publicDashboardError } from "../lib/dashboard/errors";
 import { loadDashboardTenant } from "../lib/dashboard/session";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const archivo = Archivo({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap"
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-mono",
+  display: "swap"
+});
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Lead Intelligence",
   description: "Operational priority for motorcycle dealership commercial teams"
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1e252e"
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
@@ -30,19 +49,33 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   }
 
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" className={`${archivo.variable} ${plexMono.variable}`}>
+      <body>
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
         <div className="app-shell">
           <aside className="sidebar">
             <div className="brand">
-              Lead Intelligence
-              <small>Operational priority</small>
+              <span className="plate" aria-hidden="true">
+                LI-01
+              </span>
+              <div>
+                <strong>Lead Intelligence</strong>
+                <small>Dealership dispatch</small>
+              </div>
             </div>
             <DashboardNav />
           </aside>
           <div className="main">
-            <DashboardNav variant="mobile" />
+            <DashboardNav variant="top" />
             <header className="topbar">
+              <div className="brand brand-compact">
+                <span className="plate" aria-hidden="true">
+                  LI-01
+                </span>
+                <strong>Lead Intelligence</strong>
+              </div>
               {selected && companies.length > 0 ? (
                 <CompanySelector companies={companies} selectedId={selected.id} />
               ) : (
@@ -52,9 +85,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 Demo tenant selector — not production authentication. Synthetic dataset, no real PII.
               </p>
             </header>
-            <main className="content">
+            <main id="main" className="content">
               {tenantError ? <ErrorState message={tenantError} /> : children}
             </main>
+            <DashboardNav variant="bottom" />
           </div>
         </div>
       </body>

@@ -13,7 +13,7 @@ export function LeadFilters({
   };
 }) {
   return (
-    <form className="filters" method="get">
+    <form className="filters panel" method="get">
       <label className="field">
         Sales point
         <select name="salesPoint" defaultValue={current.salesPointId ?? ""}>

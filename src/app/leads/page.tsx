@@ -88,13 +88,18 @@ export default async function LeadsPage({
         </p>
         <LeadQueueTable rows={data.rows} />
         {data.total > data.pageSize ? (
-          <p className="muted">
-            {data.page > 1 ? <a href={pageHref(params, data.page - 1)}>Previous</a> : null}
-            {data.page > 1 && data.page * data.pageSize < data.total ? " · " : ""}
-            {data.page * data.pageSize < data.total ? (
-              <a href={pageHref(params, data.page + 1)}>Next</a>
+          <nav className="pager" aria-label="Queue pages">
+            {data.page > 1 ? (
+              <a className="button secondary" href={pageHref(params, data.page - 1)}>
+                Previous
+              </a>
             ) : null}
-          </p>
+            {data.page * data.pageSize < data.total ? (
+              <a className="button secondary" href={pageHref(params, data.page + 1)}>
+                Next
+              </a>
+            ) : null}
+          </nav>
         ) : null}
       </>
     );

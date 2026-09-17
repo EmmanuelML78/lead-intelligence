@@ -14,7 +14,7 @@ export function ScoreBreakdown({ score }: { score: NonNullable<LeadDetail["score
           <PriorityBadge band={score.priorityBand} />
           <div className="priority-disclaimer">Operational priority — not purchase probability</div>
         </div>
-        <p className="muted" style={{ maxWidth: "28rem" }}>
+        <p className="muted score-lede">
           {score.summary || `${score.scoreVersion} hybrid score.`}
         </p>
       </div>

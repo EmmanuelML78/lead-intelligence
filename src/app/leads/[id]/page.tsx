@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AiExtractionPanel } from "../../../components/dashboard/ai-extraction-panel";
 import { AssignmentPanel } from "../../../components/dashboard/assignment-panel";
@@ -37,6 +38,9 @@ export default async function LeadDetailPage({
   return (
     <>
       <header className="page-header">
+        <Link className="back-link" href="/leads">
+          Back to queue
+        </Link>
         <h1>{lead.customerName}</h1>
         <p>
           {lead.leadId} · {lead.companyName} / {lead.salesPointId} · {channelLabel(lead.channel)}

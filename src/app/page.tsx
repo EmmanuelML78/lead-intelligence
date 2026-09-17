@@ -61,7 +61,7 @@ export default async function OverviewPage() {
           <strong>
             {kpis.saturatedPoolCount} of {kpis.poolCount} commercial pools currently saturated
           </strong>
-          <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+          <p className="muted">
             Eligible demand exceeds active daily capacity at those sales points. Inactive advisors
             are excluded.
           </p>
@@ -70,7 +70,7 @@ export default async function OverviewPage() {
           <div className="score-hero">
             <div>
               <div className="eyebrow">Start here</div>
-              <h2 style={{ margin: "0.2rem 0" }}>CRITICAL queue</h2>
+              <h2>CRITICAL queue</h2>
             </div>
             <Link className="button secondary" href="/leads?band=CRITICAL">
               Open full queue
