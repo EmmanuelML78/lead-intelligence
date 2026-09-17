@@ -3,7 +3,8 @@ import {
   formatCop,
   objectionLabel,
   paymentMethodLabel,
-  purchaseIntentLabel
+  purchaseIntentLabel,
+  yesNo
 } from "../../lib/dashboard/present";
 import type { AiExtractionView } from "../../lib/dashboard/present";
 
@@ -22,8 +23,8 @@ export function AiExtractionPanel({ extraction }: { extraction: AiExtractionView
   if (!extraction) {
     return (
       <section className="panel">
-        <div className="eyebrow">Conversation intelligence</div>
-        <h2>AI extraction</h2>
+        <div className="eyebrow">Inteligencia de la conversación</div>
+        <h2>Extracción de IA</h2>
         <p className="muted">{MISSING_AI_EXTRACTION_COPY}</p>
       </section>
     );
@@ -31,47 +32,47 @@ export function AiExtractionPanel({ extraction }: { extraction: AiExtractionView
 
   return (
     <section className="panel">
-      <div className="eyebrow">Conversation intelligence</div>
-      <h2>AI extraction</h2>
+      <div className="eyebrow">Inteligencia de la conversación</div>
+      <h2>Extracción de IA</h2>
       <dl className="facts">
         <div>
-          <dt>Motorcycle interest</dt>
+          <dt>Interés de motocicleta</dt>
           <dd>{extraction.motorcycleInterest ?? "—"}</dd>
           <Evidence items={extraction.evidence.motorcycleInterest} />
         </div>
         <div>
-          <dt>Budget</dt>
+          <dt>Presupuesto</dt>
           <dd>{formatCop(extraction.budget)}</dd>
           <Evidence items={extraction.evidence.budget} />
         </div>
         <div>
-          <dt>Down payment</dt>
+          <dt>Cuota inicial</dt>
           <dd>{formatCop(extraction.downPayment)}</dd>
           <Evidence items={extraction.evidence.downPayment} />
         </div>
         <div>
-          <dt>Payment method</dt>
+          <dt>Método de pago</dt>
           <dd>{paymentMethodLabel(extraction.paymentMethod)}</dd>
           <Evidence items={extraction.evidence.paymentMethod} />
         </div>
         <div>
-          <dt>Purchase intent</dt>
+          <dt>Intención de compra</dt>
           <dd>{purchaseIntentLabel(extraction.purchaseIntent)}</dd>
           <Evidence items={extraction.evidence.purchaseIntent} />
         </div>
         <div>
-          <dt>Main objection</dt>
+          <dt>Objeción principal</dt>
           <dd>{objectionLabel(extraction.mainObjection)}</dd>
           <Evidence items={extraction.evidence.mainObjection} />
         </div>
         <div>
-          <dt>Appointment requested</dt>
-          <dd>{extraction.requestedAppointment ? "Yes" : "No"}</dd>
+          <dt>Pidió cita</dt>
+          <dd>{yesNo(extraction.requestedAppointment)}</dd>
           <Evidence items={extraction.evidence.requestedAppointment} />
         </div>
         <div>
-          <dt>Quote requested</dt>
-          <dd>{extraction.requestedQuote ? "Yes" : "No"}</dd>
+          <dt>Pidió cotización</dt>
+          <dd>{yesNo(extraction.requestedQuote)}</dd>
           <Evidence items={extraction.evidence.requestedQuote} />
         </div>
       </dl>

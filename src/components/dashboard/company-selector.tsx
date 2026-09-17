@@ -13,7 +13,7 @@ export function CompanySelector({
   return (
     <form action={setDemoCompany} className="company-selector">
       <label className="field">
-        Demo company
+        Empresa (demo)
         <select
           key={selectedId}
           name="companyId"
@@ -28,7 +28,7 @@ export function CompanySelector({
         </select>
       </label>
       <noscript>
-        <button type="submit">Switch</button>
+        <button type="submit">Cambiar</button>
       </noscript>
     </form>
   );

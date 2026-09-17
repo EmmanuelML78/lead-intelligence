@@ -1,4 +1,5 @@
 import type { LeadChannel, PriorityBand } from "@prisma/client";
+import { channelLabel, priorityBandLabel } from "../../lib/dashboard/present";
 
 export function LeadFilters({
   salesPoints,
@@ -15,9 +16,9 @@ export function LeadFilters({
   return (
     <form className="filters panel" method="get">
       <label className="field">
-        Sales point
+        Punto de venta
         <select name="salesPoint" defaultValue={current.salesPointId ?? ""}>
-          <option value="">All</option>
+          <option value="">Todos</option>
           {salesPoints.map((id) => (
             <option key={id} value={id}>
               {id}
@@ -26,34 +27,34 @@ export function LeadFilters({
         </select>
       </label>
       <label className="field">
-        Priority
+        Prioridad
         <select name="band" defaultValue={current.priorityBand ?? ""}>
-          <option value="">All</option>
-          <option value="CRITICAL">CRITICAL</option>
-          <option value="HIGH">HIGH</option>
-          <option value="MEDIUM">MEDIUM</option>
-          <option value="LOW">LOW</option>
+          <option value="">Todas</option>
+          <option value="CRITICAL">{priorityBandLabel("CRITICAL")}</option>
+          <option value="HIGH">{priorityBandLabel("HIGH")}</option>
+          <option value="MEDIUM">{priorityBandLabel("MEDIUM")}</option>
+          <option value="LOW">{priorityBandLabel("LOW")}</option>
         </select>
       </label>
       <label className="field">
-        Assignment
+        Asignación
         <select name="assignment" defaultValue={current.assignmentState ?? ""}>
-          <option value="">All</option>
-          <option value="ASSIGNED">Assigned</option>
-          <option value="WAITING">Waiting</option>
-          <option value="UNASSIGNED">Unassigned</option>
+          <option value="">Todas</option>
+          <option value="ASSIGNED">Asignado</option>
+          <option value="WAITING">En espera</option>
+          <option value="UNASSIGNED">Sin asignar</option>
         </select>
       </label>
       <label className="field">
-        Channel
+        Canal
         <select name="channel" defaultValue={current.channel ?? ""}>
-          <option value="">All</option>
-          <option value="WHATSAPP">WhatsApp</option>
-          <option value="META_ADS">Meta Ads</option>
-          <option value="WEB_FORM">Web form</option>
+          <option value="">Todos</option>
+          <option value="WHATSAPP">{channelLabel("WHATSAPP")}</option>
+          <option value="META_ADS">{channelLabel("META_ADS")}</option>
+          <option value="WEB_FORM">{channelLabel("WEB_FORM")}</option>
         </select>
       </label>
-      <button type="submit">Apply</button>
+      <button type="submit">Aplicar</button>
     </form>
   );
 }

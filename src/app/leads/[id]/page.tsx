@@ -7,7 +7,7 @@ import { ScoreBreakdown } from "../../../components/dashboard/score-breakdown";
 import { ErrorState } from "../../../components/dashboard/states";
 import { publicDashboardError } from "../../../lib/dashboard/errors";
 import { prisma } from "../../../lib/db/client";
-import { channelLabel, statusLabel } from "../../../lib/dashboard/present";
+import { channelLabel, formatDashboardDateTime, statusLabel } from "../../../lib/dashboard/present";
 import { getLeadDetail } from "../../../lib/dashboard/queries";
 import { loadDashboardTenant } from "../../../lib/dashboard/session";
 
@@ -39,7 +39,7 @@ export default async function LeadDetailPage({
     <>
       <header className="page-header">
         <Link className="back-link" href="/leads">
-          Back to queue
+          Volver a la cola
         </Link>
         <h1>{lead.customerName}</h1>
         <p>
@@ -49,21 +49,21 @@ export default async function LeadDetailPage({
       <section className="panel">
         <dl className="facts">
           <div>
-            <dt>Status</dt>
+            <dt>Estado</dt>
             <dd>{statusLabel(lead.status)}</dd>
           </div>
           <div>
-            <dt>Motorcycle</dt>
+            <dt>Motocicleta</dt>
             <dd>{lead.motorcycle}</dd>
           </div>
           <div>
-            <dt>Registered</dt>
-            <dd>{lead.registeredAt ? new Date(lead.registeredAt).toLocaleString("en-CA") : "—"}</dd>
+            <dt>Registrado</dt>
+            <dd>{lead.registeredAt ? formatDashboardDateTime(lead.registeredAt) : "—"}</dd>
           </div>
           <div>
-            <dt>First contact</dt>
+            <dt>Primer contacto</dt>
             <dd>
-              {lead.firstContactAt ? new Date(lead.firstContactAt).toLocaleString("en-CA") : "Not contacted"}
+              {lead.firstContactAt ? formatDashboardDateTime(lead.firstContactAt) : "Sin contactar"}
             </dd>
           </div>
           <div>
@@ -78,8 +78,8 @@ export default async function LeadDetailPage({
         <ScoreBreakdown score={lead.score} />
       ) : (
         <section className="panel">
-          <h2>No current hybrid-v1 score</h2>
-          <p className="muted">This lead has no valid current priority score.</p>
+          <h2>Sin puntaje hybrid-v1 vigente</h2>
+          <p className="muted">Este lead no tiene un puntaje de prioridad actual válido.</p>
         </section>
       )}
       <div className="grid-2">

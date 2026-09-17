@@ -40,8 +40,8 @@ export default async function LeadsPage({
     const tenant = await loadDashboardTenant();
     if (!tenant.selected) {
       return (
-        <EmptyState title="No companies yet">
-          Run <code>bun run pipeline</code> before opening the queue.
+        <EmptyState title="Aún no hay empresas">
+          Ejecuta <code>bun run pipeline</code> antes de abrir la cola.
         </EmptyState>
       );
     }
@@ -68,10 +68,10 @@ export default async function LeadsPage({
     return (
       <>
         <header className="page-header">
-          <h1>Prioritized lead queue</h1>
+          <h1>Cola priorizada de leads</h1>
           <p>
-            Current valid hybrid-v1 score, company-scoped. Work the highest operational priority
-            first.
+            Puntaje hybrid-v1 vigente, aislado por empresa. Atiende primero la mayor prioridad
+            operativa.
           </p>
         </header>
         <LeadFilters
@@ -84,19 +84,19 @@ export default async function LeadsPage({
           }}
         />
         <p className="muted">
-          Showing {from}–{to} of {data.total} · {data.businessDate}
+          Mostrando {from}–{to} de {data.total} · {data.businessDate}
         </p>
         <LeadQueueTable rows={data.rows} />
         {data.total > data.pageSize ? (
-          <nav className="pager" aria-label="Queue pages">
+          <nav className="pager" aria-label="Páginas de la cola">
             {data.page > 1 ? (
               <a className="button secondary" href={pageHref(params, data.page - 1)}>
-                Previous
+                Anterior
               </a>
             ) : null}
             {data.page * data.pageSize < data.total ? (
               <a className="button secondary" href={pageHref(params, data.page + 1)}>
-                Next
+                Siguiente
               </a>
             ) : null}
           </nav>

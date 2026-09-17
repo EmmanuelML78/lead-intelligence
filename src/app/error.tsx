@@ -10,10 +10,10 @@ export default function DashboardError({
 }) {
   return (
     <section className="panel state">
-      <h2>Something went wrong</h2>
+      <h2>Algo salió mal</h2>
       <p className="muted">{DASHBOARD_UNAVAILABLE_MESSAGE}</p>
       <button type="button" onClick={reset}>
-        Retry
+        Reintentar
       </button>
     </section>
   );

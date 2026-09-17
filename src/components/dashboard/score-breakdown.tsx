@@ -9,13 +9,13 @@ export function ScoreBreakdown({ score }: { score: NonNullable<LeadDetail["score
     <section className="panel">
       <div className="score-hero">
         <div>
-          <div className="eyebrow">Priority</div>
+          <div className="eyebrow">Prioridad</div>
           <div className="score-number mono">{formatScore(score.totalScore)}</div>
           <PriorityBadge band={score.priorityBand} />
-          <div className="priority-disclaimer">Operational priority — not purchase probability</div>
+          <div className="priority-disclaimer">Prioridad operativa — no es probabilidad de compra</div>
         </div>
         <p className="muted score-lede">
-          {score.summary || `${score.scoreVersion} hybrid score.`}
+          {score.summary || `Puntaje híbrido ${score.scoreVersion}.`}
         </p>
       </div>
       <div className="score-stack" aria-hidden="true">
@@ -34,7 +34,7 @@ export function ScoreBreakdown({ score }: { score: NonNullable<LeadDetail["score
             <div className="mono">
               {formatScore(component.component)} × {component.weight}% = {formatScore(component.contribution)}
             </div>
-            <div className="muted">Weighted contribution {formatPercent(component.contribution / 100)}</div>
+            <div className="muted">Aporte ponderado {formatPercent(component.contribution / 100)}</div>
             <p>{component.explanation}</p>
           </article>
         ))}

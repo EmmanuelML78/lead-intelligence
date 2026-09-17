@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/", label: "Overview", short: "Home" },
-  { href: "/leads", label: "Lead queue", short: "Queue" },
-  { href: "/capacity", label: "Capacity", short: "Capacity" },
-  { href: "/data-quality", label: "Data quality", short: "Quality" }
+  { href: "/", label: "Resumen", short: "Inicio" },
+  { href: "/leads", label: "Cola de leads", short: "Cola" },
+  { href: "/capacity", label: "Capacidad", short: "Capacidad" },
+  { href: "/data-quality", label: "Calidad de datos", short: "Calidad" }
 ] as const;
 
 export function DashboardNav({
@@ -19,7 +19,7 @@ export function DashboardNav({
   const className = variant === "sidebar" ? "nav" : variant === "top" ? "nav-top" : "nav-bottom";
 
   return (
-    <nav className={className} aria-label="Dashboard">
+    <nav className={className} aria-label="Navegación">
       {LINKS.map((link) => {
         const current =
           link.href === "/"

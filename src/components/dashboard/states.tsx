@@ -12,7 +12,7 @@ export function EmptyState({ title, children }: { title: string; children: React
 export function ErrorState({ message }: { message: string }) {
   return (
     <section className="panel state">
-      <h2>Dashboard unavailable</h2>
+      <h2>Panel no disponible</h2>
       <p className="muted">{message}</p>
     </section>
   );

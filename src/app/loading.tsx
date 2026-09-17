@@ -4,7 +4,7 @@ export default function Loading() {
       <span />
       <span />
       <span />
-      <p className="muted">Loading operational view…</p>
+      <p className="muted">Cargando vista operativa…</p>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { FEATURED_ISSUE_TYPES } from "../../lib/dashboard/issues";
-import { issueTypeLabel } from "../../lib/dashboard/present";
+import { formatDashboardDateTime, issueTypeLabel, pipelineStatusLabel } from "../../lib/dashboard/present";
 import type { DataQualityData } from "../../lib/dashboard/queries";
 
 function durationLabel(durationMs: number | null): string {
@@ -21,46 +21,46 @@ export function DataQualityPanel({ data }: { data: DataQualityData }) {
   return (
     <>
       <section className="panel">
-        <div className="eyebrow">Latest pipeline run</div>
+        <div className="eyebrow">Última corrida del pipeline</div>
         {data.latestRun ? (
           <>
-            <h2>{data.latestRun.status}</h2>
+            <h2>{pipelineStatusLabel(data.latestRun.status)}</h2>
             <dl className="facts">
               <div>
-                <dt>Leads persisted</dt>
+                <dt>Leads persistidos</dt>
                 <dd>{data.latestRun.leadsPersisted}</dd>
               </div>
               <div>
-                <dt>Customers</dt>
+                <dt>Clientes</dt>
                 <dd>{data.latestRun.customersPersisted}</dd>
               </div>
               <div>
-                <dt>Conversations</dt>
+                <dt>Conversaciones</dt>
                 <dd>{data.latestRun.conversationsPersisted}</dd>
               </div>
               <div>
-                <dt>Messages</dt>
+                <dt>Mensajes</dt>
                 <dd>{data.latestRun.messagesPersisted}</dd>
               </div>
               <div>
-                <dt>Started</dt>
-                <dd>{new Date(data.latestRun.startedAt).toLocaleString("en-CA")}</dd>
+                <dt>Inicio</dt>
+                <dd>{formatDashboardDateTime(data.latestRun.startedAt)}</dd>
               </div>
               <div>
-                <dt>Run time</dt>
+                <dt>Duración</dt>
                 <dd>{durationLabel(data.latestRun.durationMs)}</dd>
               </div>
             </dl>
           </>
         ) : (
-          <p className="muted">No pipeline runs recorded yet. Run `bun run pipeline`.</p>
+          <p className="muted">Aún no hay corridas de pipeline. Ejecuta `bun run pipeline`.</p>
         )}
       </section>
       <section className="panel">
-        <div className="eyebrow">Unique issues by type</div>
-        <h2>Data-quality fingerprints</h2>
+        <div className="eyebrow">Hallazgos únicos por tipo</div>
+        <h2>Huellas de calidad de datos</h2>
         <p className="muted">
-          Counts are distinct issue rows, not the sum of reobserved pipeline runs.
+          Los conteos son filas distintas de hallazgo, no la suma de reobservaciones del pipeline.
         </p>
         <div className="issue-list">
           {featured.map((row) => (

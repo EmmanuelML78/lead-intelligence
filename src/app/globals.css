@@ -364,6 +364,7 @@ table.data tbody tr:hover {
   font-size: 0.7rem;
   font-weight: 700;
   font-family: var(--font-mono);
+  white-space: nowrap;
 }
 
 .band-critical { background: var(--critical-soft); color: var(--critical); }

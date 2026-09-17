@@ -17,9 +17,9 @@ export type AssignmentView = {
 };
 
 const WAITING_COPY: Record<Exclude<AssignmentReason, "ASSIGNED">, string> = {
-  CAPACITY_EXHAUSTED: "Waiting: sales-point daily capacity exhausted.",
-  NO_ACTIVE_ADVISOR: "Waiting: no active advisor at this sales point.",
-  NO_ELIGIBLE_ADVISOR: "Waiting: no eligible advisor at this sales point."
+  CAPACITY_EXHAUSTED: "En espera: la capacidad diaria del punto de venta está agotada.",
+  NO_ACTIVE_ADVISOR: "En espera: no hay asesores activos en este punto de venta.",
+  NO_ELIGIBLE_ADVISOR: "En espera: no hay asesores elegibles en este punto de venta."
 };
 
 export function presentAssignment(input: {
@@ -33,8 +33,8 @@ export function presentAssignment(input: {
     return {
       state: "UNASSIGNED",
       reasonCode: null,
-      label: "Unassigned",
-      explanation: "No assignment for this business date.",
+      label: "Sin asignar",
+      explanation: "No hay asignación para esta fecha de negocio.",
       advisorId: null,
       advisorName: null,
       assignedFor: null
@@ -47,7 +47,7 @@ export function presentAssignment(input: {
     return {
       state: "ASSIGNED",
       reasonCode: input.reasonCode,
-      label: "Assigned",
+      label: "Asignado",
       explanation: input.explanation,
       advisorId: input.advisorId,
       advisorName: input.advisorName ?? input.advisorId,
@@ -59,7 +59,7 @@ export function presentAssignment(input: {
     return {
       state: "WAITING",
       reasonCode: input.reasonCode,
-      label: "Waiting",
+      label: "En espera",
       explanation: WAITING_COPY[input.reasonCode],
       advisorId: null,
       advisorName: null,
@@ -70,15 +70,16 @@ export function presentAssignment(input: {
   return {
     state: "UNASSIGNED",
     reasonCode: input.reasonCode,
-    label: "Unassigned",
-    explanation: input.explanation || "No assignment for this business date.",
+    label: "Sin asignar",
+    explanation: input.explanation || "No hay asignación para esta fecha de negocio.",
     advisorId: null,
     advisorName: null,
     assignedFor
   };
 }
 
-export const MISSING_AI_EXTRACTION_COPY = "No AI extraction available for this conversation.";
+export const MISSING_AI_EXTRACTION_COPY =
+  "No hay extracción de IA para esta conversación.";
 
 export type AiExtractionView = {
   motorcycleInterest: string | null;
@@ -154,14 +155,14 @@ export type SlaView = {
 };
 
 const URGENCY_SLA_LABEL: Record<UrgencyBucket, string> = {
-  CONTACTED: "Contacted",
-  UNKNOWN_REGISTRATION_TIME: "Unknown registration time",
-  FRESH_0_15M: "Fresh (<15m)",
-  ACTIONABLE_15_45M: "Actionable (15–45m)",
-  APPROACHING_SLA_45_60M: "Approaching SLA (45–60m)",
-  OVERDUE_1_4H: "Overdue (1–4h)",
-  SEVERELY_OVERDUE_4_24H: "Severely overdue (4–24h)",
-  CRITICAL_24H_PLUS: "Critical (24h+ uncontacted)"
+  CONTACTED: "Contactado",
+  UNKNOWN_REGISTRATION_TIME: "Hora de registro desconocida",
+  FRESH_0_15M: "Recién llegado (<15 min)",
+  ACTIONABLE_15_45M: "Accionable (15–45 min)",
+  APPROACHING_SLA_45_60M: "Cerca del SLA (45–60 min)",
+  OVERDUE_1_4H: "Vencido (1–4 h)",
+  SEVERELY_OVERDUE_4_24H: "Muy vencido (4–24 h)",
+  CRITICAL_24H_PLUS: "Crítico (más de 24 h sin contactar)"
 };
 
 export function presentSla(input: {
@@ -175,11 +176,11 @@ export function presentSla(input: {
   const ageLabel =
     input.leadAgeMinutes == null
       ? input.registeredAtAmbiguous
-        ? "Ambiguous date"
-        : "Unknown age"
+        ? "Fecha ambigua"
+        : "Edad desconocida"
       : formatDurationMinutes(input.leadAgeMinutes);
   return {
-    label: bucket ? URGENCY_SLA_LABEL[bucket] : contacted ? "Contacted" : "Unknown SLA",
+    label: bucket ? URGENCY_SLA_LABEL[bucket] : contacted ? "Contactado" : "SLA desconocido",
     ageLabel,
     contacted,
     bucket
@@ -221,75 +222,75 @@ export function channelLabel(channel: string): string {
     case "META_ADS":
       return "Meta Ads";
     case "WEB_FORM":
-      return "Web form";
+      return "Formulario web";
     default:
-      return "Unknown";
+      return "Desconocido";
   }
 }
 
 export function statusLabel(status: string): string {
   switch (status) {
     case "SIN_GESTION":
-      return "Unworked";
+      return "Sin gestión";
     case "CONTACTADO":
-      return "Contacted";
+      return "Contactado";
     case "NO_CONTESTA":
-      return "No answer";
+      return "No contesta";
     case "COTIZACION_ENVIADA":
-      return "Quote sent";
+      return "Cotización enviada";
     case "EN_PROCESO":
-      return "In progress";
+      return "En proceso";
     case "DESCARTADO":
-      return "Discarded";
+      return "Descartado";
     default:
-      return "Unknown";
+      return "Desconocido";
   }
 }
 
 export function purchaseIntentLabel(intent: string): string {
   switch (intent) {
     case "HIGH":
-      return "High";
+      return "Alta";
     case "MEDIUM":
-      return "Medium";
+      return "Media";
     case "LOW":
-      return "Low";
+      return "Baja";
     default:
-      return "Unknown";
+      return "Desconocida";
   }
 }
 
 export function paymentMethodLabel(method: string): string {
   switch (method) {
     case "CASH":
-      return "Cash";
+      return "Contado";
     case "CREDIT":
-      return "Credit";
+      return "Crédito";
     default:
-      return "Unknown";
+      return "Desconocido";
   }
 }
 
 export function objectionLabel(objection: string): string {
   switch (objection) {
     case "PRICE":
-      return "Price";
+      return "Precio";
     case "CREDIT":
-      return "Credit";
+      return "Crédito";
     case "AVAILABILITY":
-      return "Availability";
+      return "Disponibilidad";
     case "MODEL":
-      return "Model";
+      return "Modelo";
     case "TIMING":
-      return "Timing";
+      return "Tiempo";
     case "COMPARISON":
-      return "Comparison";
+      return "Comparación";
     case "OTHER":
-      return "Other";
+      return "Otra";
     case "NONE":
-      return "None";
+      return "Ninguna";
     default:
-      return "Unknown";
+      return "Desconocida";
   }
 }
 
@@ -303,7 +304,7 @@ export function motorcycleLabel(input: {
   if (catalog) return catalog;
   if (input.raw?.trim()) return input.raw.trim();
   if (input.sku) return input.sku;
-  return "Unresolved model";
+  return "Modelo sin resolver";
 }
 
 export function customerLabel(input: {
@@ -328,7 +329,7 @@ export function presentScoreComponents(explanation: ScoreExplanation | null): Sc
   return [
     {
       key: "propensity",
-      title: "Historical propensity",
+      title: "Propensión histórica",
       component: explanation.propensity.component,
       contribution: explanation.propensity.contribution,
       weight: explanation.weights.propensity,
@@ -336,7 +337,7 @@ export function presentScoreComponents(explanation: ScoreExplanation | null): Sc
     },
     {
       key: "intent",
-      title: "AI commercial intent",
+      title: "Intención comercial (IA)",
       component: explanation.intent.component,
       contribution: explanation.intent.contribution,
       weight: explanation.weights.intent,
@@ -344,7 +345,7 @@ export function presentScoreComponents(explanation: ScoreExplanation | null): Sc
     },
     {
       key: "urgency",
-      title: "Operational urgency",
+      title: "Urgencia operativa",
       component: explanation.urgency.component,
       contribution: explanation.urgency.contribution,
       weight: explanation.weights.urgency,
@@ -352,7 +353,7 @@ export function presentScoreComponents(explanation: ScoreExplanation | null): Sc
     },
     {
       key: "inventory",
-      title: "Catalog availability",
+      title: "Disponibilidad en catálogo",
       component: explanation.inventory.component,
       contribution: explanation.inventory.contribution,
       weight: explanation.weights.inventory,
@@ -363,14 +364,14 @@ export function presentScoreComponents(explanation: ScoreExplanation | null): Sc
 
 function propensityCopy(explanation: ScoreExplanation): string {
   const probability = (explanation.propensity.rawProbability * 100).toFixed(1);
-  return `Historical close-rate signal from tabular features (${probability}% model probability). This is one input to operational priority, not a purchase forecast.`;
+  return `Señal histórica de cierre a partir de variables tabulares (${probability}% de probabilidad del modelo). Es un insumo de la prioridad operativa, no un pronóstico de compra.`;
 }
 
 function intentCopy(explanation: ScoreExplanation): string {
   if (!explanation.intent.usedAiExtraction) {
-    return "No AI extraction for this conversation; the intent component uses the documented neutral fallback.";
+    return "No hay extracción de IA para esta conversación; el componente de intención usa el fallback neutro documentado.";
   }
-  return `Conversation intent ${purchaseIntentLabel(explanation.intent.purchaseIntent).toLowerCase()}, with deterministic modifiers for appointment, quote, payment, and objections. Extraction confidence is not used.`;
+  return `Intención de la conversación ${purchaseIntentLabel(explanation.intent.purchaseIntent).toLowerCase()}, con modificadores determinísticos por cita, cotización, pago y objeciones. La confianza de la extracción no se usa.`;
 }
 
 function urgencyCopy(explanation: ScoreExplanation): string {
@@ -380,19 +381,19 @@ function urgencyCopy(explanation: ScoreExplanation): string {
     leadAgeMinutes: explanation.urgency.leadAgeMinutes
   });
   if (explanation.urgency.contacted) {
-    return "Already contacted, so initial-response SLA urgency is reduced.";
+    return "Ya fue contactado, así que la urgencia de primer contacto se reduce.";
   }
-  return `${sla.label}. Uses current lead age at scoring time, never historical hours-to-first-contact.`;
+  return `${sla.label}. Usa la edad actual del lead al puntuar, nunca el tiempo histórico hasta el primer contacto.`;
 }
 
 function inventoryCopy(explanation: ScoreExplanation): string {
   if (explanation.inventory.catalogStatus === "CATALOG_AVAILABLE") {
-    return "Resolved model has global catalog units. This is not company or store stock.";
+    return "El modelo resuelto tiene unidades en el catálogo global. No es inventario de empresa ni de punto de venta.";
   }
   if (explanation.inventory.catalogStatus === "CATALOG_UNAVAILABLE") {
-    return "Resolved model has zero global catalog units.";
+    return "El modelo resuelto no tiene unidades en el catálogo global.";
   }
-  return "Model or catalog units unresolved; inventory uses the documented neutral fallback.";
+  return "Modelo o unidades de catálogo sin resolver; inventario usa el fallback neutro documentado.";
 }
 
 export function parseScoreExplanation(value: unknown): ScoreExplanation | null {
@@ -432,5 +433,65 @@ export function bandClassName(band: PriorityBand): string {
 }
 
 export function issueTypeLabel(type: string): string {
-  return type.replaceAll("_", " ");
+  return ISSUE_TYPE_LABEL[type] ?? type.replaceAll("_", " ").toLowerCase();
+}
+
+const ISSUE_TYPE_LABEL: Record<string, string> = {
+  AMBIGUOUS_DATE: "Fecha ambigua",
+  MISSING_CITY: "Ciudad faltante",
+  MISSING_MOTORCYCLE_INTEREST: "Interés de moto faltante",
+  UNRESOLVED_MOTORCYCLE: "Modelo sin resolver",
+  ORPHAN_CONVERSATION: "Conversación huérfana",
+  DUPLICATE_LEAD_ID: "ID de lead duplicado",
+  AI_EXTRACTION_PROVIDER_FAILED: "Fallo del proveedor de IA"
+};
+
+export function priorityBandLabel(band: PriorityBand): string {
+  switch (band) {
+    case "CRITICAL":
+      return "Crítica";
+    case "HIGH":
+      return "Alta";
+    case "MEDIUM":
+      return "Media";
+    case "LOW":
+      return "Baja";
+    default:
+      return band;
+  }
+}
+
+export function transcriptRoleLabel(role: TranscriptRole): string {
+  switch (role) {
+    case "CUSTOMER":
+      return "Cliente";
+    case "ADVISOR":
+      return "Asesor";
+    default:
+      return "Desconocido";
+  }
+}
+
+export function pipelineStatusLabel(status: string): string {
+  switch (status) {
+    case "SUCCESS":
+      return "Completado";
+    case "FAILED":
+      return "Falló";
+    case "RUNNING":
+      return "En curso";
+    default:
+      return status;
+  }
+}
+
+export function yesNo(value: boolean): string {
+  return value ? "Sí" : "No";
+}
+
+export function formatDashboardDateTime(value: Date | string): string {
+  return new Date(value).toLocaleString("es-CO", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
 }

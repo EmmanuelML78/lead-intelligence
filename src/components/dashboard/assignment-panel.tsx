@@ -3,23 +3,23 @@ import type { AssignmentView } from "../../lib/dashboard/present";
 export function AssignmentPanel({ assignment }: { assignment: AssignmentView }) {
   return (
     <section className="panel">
-      <div className="eyebrow">Today’s workload</div>
-      <h2>Assignment</h2>
+      <div className="eyebrow">Carga de hoy</div>
+      <h2>Asignación</h2>
       <dl className="facts">
         <div>
-          <dt>State</dt>
+          <dt>Estado</dt>
           <dd>{assignment.label}</dd>
         </div>
         <div>
-          <dt>Advisor</dt>
+          <dt>Asesor</dt>
           <dd>{assignment.advisorName ?? "—"}</dd>
         </div>
         <div>
-          <dt>Business date</dt>
+          <dt>Fecha de negocio</dt>
           <dd>{assignment.assignedFor ?? "—"}</dd>
         </div>
         <div>
-          <dt>Why</dt>
+          <dt>Motivo</dt>
           <dd>{assignment.explanation}</dd>
         </div>
       </dl>

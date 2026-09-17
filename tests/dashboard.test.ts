@@ -62,7 +62,7 @@ test("assignment presentation hides enums behind operational copy", () => {
       advisorName: null,
       assignedFor: new Date("2026-09-14T00:00:00.000Z")
     }).explanation,
-    "Waiting: sales-point daily capacity exhausted."
+    "En espera: la capacidad diaria del punto de venta está agotada."
   );
   const assigned = presentAssignment({
     reasonCode: "ASSIGNED",
@@ -144,7 +144,7 @@ test("data-quality unique issue counts ignore reobservedRunCount", () => {
 
 test("missing AI extraction stays a neutral empty state", () => {
   assert.equal(presentAiExtraction(null), null);
-  assert.equal(MISSING_AI_EXTRACTION_COPY, "No AI extraction available for this conversation.");
+  assert.equal(MISSING_AI_EXTRACTION_COPY, "No hay extracción de IA para esta conversación.");
   const view = presentAiExtraction({
     motorcycleInterest: "Pulsar",
     budget: 12_000_000,
@@ -183,7 +183,7 @@ test("SLA copy uses urgency bucket rather than raw enums", () => {
     contacted: false,
     leadAgeMinutes: 36 * 60
   });
-  assert.equal(sla.label, "Critical (24h+ uncontacted)");
+  assert.equal(sla.label, "Crítico (más de 24 h sin contactar)");
   assert.equal(sla.ageLabel, "1d 12h");
 });
 

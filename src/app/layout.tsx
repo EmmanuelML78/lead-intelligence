@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Lead Intelligence",
-  description: "Operational priority for motorcycle dealership commercial teams"
+  description: "Prioridad operativa para equipos comerciales de concesionarios de motos"
 };
 
 export const viewport: Viewport = {
@@ -49,10 +49,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   }
 
   return (
-    <html lang="en" className={`${archivo.variable} ${plexMono.variable}`}>
+    <html lang="es" className={`${archivo.variable} ${plexMono.variable}`}>
       <body>
         <a className="skip-link" href="#main">
-          Skip to content
+          Saltar al contenido
         </a>
         <div className="app-shell">
           <aside className="sidebar">
@@ -62,7 +62,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               </span>
               <div>
                 <strong>Lead Intelligence</strong>
-                <small>Dealership dispatch</small>
+                <small>Despacho comercial</small>
               </div>
             </div>
             <DashboardNav />
@@ -79,10 +79,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               {selected && companies.length > 0 ? (
                 <CompanySelector companies={companies} selectedId={selected.id} />
               ) : (
-                <span className="muted">No company context</span>
+                <span className="muted">Sin empresa seleccionada</span>
               )}
               <p className="demo-note">
-                Demo tenant selector — not production authentication. Synthetic dataset, no real PII.
+                Selector de empresa de demostración — no es autenticación de producción. Datos sintéticos, sin PII real.
               </p>
             </header>
             <main id="main" className="content">

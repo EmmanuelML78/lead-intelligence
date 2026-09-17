@@ -12,10 +12,11 @@ export default async function DataQualityPage() {
     return (
       <>
         <header className="page-header">
-          <h1>Pipeline observability</h1>
+          <h1>Observabilidad del pipeline</h1>
           <p>
-            Latest run status and unique data-quality fingerprints. This screen is operational, not
-            a tenant commercial queue; issue rows are counted by type, never by reobservedRunCount.
+            Estado de la última corrida y huellas únicas de calidad de datos. Esta pantalla es
+            operativa, no una cola comercial por empresa; los hallazgos se cuentan por tipo, nunca
+            por reobservaciones del pipeline.
           </p>
         </header>
         <DataQualityPanel data={data} />

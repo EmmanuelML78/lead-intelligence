@@ -1,5 +1,5 @@
 export const DASHBOARD_UNAVAILABLE_MESSAGE =
-  "The dashboard could not load this view. Try again in a moment.";
+  "No se pudo cargar esta vista. Inténtalo de nuevo en un momento.";
 
 /**
  * User-visible dashboard errors must never include Prisma messages,
