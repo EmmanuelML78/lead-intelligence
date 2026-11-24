@@ -340,7 +340,9 @@ model Assignment {
   reasonCode  AssignmentReason
   explanation String
   lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  advisor     Advisor?         @relation(fields: [advisorId], references: [id])
+  // Restrict keeps assignment history intact: an advisor that was ever given
+  // a lead cannot be deleted. Deactivate the advisor (active = false) instead.
+  advisor     Advisor?         @relation(fields: [advisorId], references: [id], onDelete: Restrict)
   leadScore   LeadScore?       @relation(fields: [leadScoreId], references: [id], onDelete: SetNull)
   createdAt   DateTime         @default(now())
 
