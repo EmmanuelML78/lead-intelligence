@@ -175,6 +175,7 @@ model Lead {
   conversations Conversation[]
   aiExtractions AiExtraction[]
   scores        LeadScore[]
+  currentScores LeadCurrentScore[]
   assignments   Assignment[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -311,11 +312,31 @@ model LeadScore {
   inputFingerprint     String
   lead                  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
   assignments           Assignment[]
+  currentFor            LeadCurrentScore[]
   createdAt             DateTime     @default(now())
 
   @@index([leadId, createdAt])
   @@index([totalScore])
   @@unique([leadId, scoreVersion, inputFingerprint])
+  // Target of the LeadCurrentScore composite foreign key.
+  @@unique([id, leadId, scoreVersion])
+}
+
+// LeadScore is the append-only history of evaluations. This table records,
+// explicitly, which of those rows is the current score of a lead for a score
+// version. It is set by the scoring stage on every evaluation, so validity
+// never depends on LeadScore.createdAt. The composite foreign key guarantees
+// the referenced score belongs to the same lead and version.
+model LeadCurrentScore {
+  leadId       String
+  scoreVersion String
+  leadScoreId  String
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadScore    LeadScore @relation(fields: [leadScoreId, leadId, scoreVersion], references: [id, leadId, scoreVersion], onDelete: Cascade)
+  updatedAt    DateTime  @updatedAt
+
+  @@id([leadId, scoreVersion])
+  @@index([leadScoreId])
 }
 
 // Operational assignment outcome for one lead on one business date.

@@ -126,21 +126,26 @@ export type DataQualityData = {
   issueCounts: IssueTypeCount[];
 };
 
+// The current score is read through the explicit LeadCurrentScore record,
+// never inferred from LeadScore.createdAt.
 const currentScoreSelect = {
   where: { scoreVersion: PRIORITY_SCORE_VERSION },
-  orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
-  take: 1,
   select: {
-    id: true,
     scoreVersion: true,
-    totalScore: true,
-    priorityBand: true,
-    propensityComponent: true,
-    intentComponent: true,
-    urgencyComponent: true,
-    inventoryComponent: true,
-    explanation: true,
-    createdAt: true
+    leadScore: {
+      select: {
+        id: true,
+        scoreVersion: true,
+        totalScore: true,
+        priorityBand: true,
+        propensityComponent: true,
+        intentComponent: true,
+        urgencyComponent: true,
+        inventoryComponent: true,
+        explanation: true,
+        createdAt: true
+      }
+    }
   }
 };
 
@@ -205,13 +210,16 @@ type OperationalLeadRow = {
   motorcycleSku: string | null;
   customer: { companyId: string; normalizedName: string | null } | null;
   motorcycle: { sku: string; brand: string; line: string } | null;
-  scores: Array<{
-    id: string;
+  currentScores: Array<{
     scoreVersion: string;
-    totalScore: number;
-    priorityBand: PriorityBand;
-    explanation: Prisma.JsonValue;
-    createdAt: Date;
+    leadScore: {
+      id: string;
+      scoreVersion: string;
+      totalScore: number;
+      priorityBand: PriorityBand;
+      explanation: Prisma.JsonValue;
+      createdAt: Date;
+    };
   }>;
   assignments: Array<{
     reasonCode: AssignmentReasonFromRow;
@@ -249,7 +257,7 @@ async function fetchOperationalLeads(
       motorcycleSku: true,
       customer: { select: { companyId: true, normalizedName: true } },
       motorcycle: { select: { sku: true, brand: true, line: true } },
-      scores: currentScoreSelect,
+      currentScores: currentScoreSelect,
       assignments: {
         where: { assignedFor: businessDate },
         take: 1,
@@ -271,7 +279,7 @@ async function fetchOperationalLeads(
 }
 
 function toAssignmentLead(row: OperationalLeadRow): AssignmentLead {
-  const currentScore = selectCurrentScore(row.scores);
+  const currentScore = selectCurrentScore(row.currentScores);
   return {
     leadId: row.id,
     companyId: row.companyId,
@@ -284,7 +292,7 @@ function toAssignmentLead(row: OperationalLeadRow): AssignmentLead {
 }
 
 function toQueueRow(row: OperationalLeadRow): QueueLeadRow | null {
-  const currentScore = selectCurrentScore(row.scores);
+  const currentScore = selectCurrentScore(row.currentScores);
   if (!currentScore) return null;
   const explanation = parseScoreExplanation(currentScore.explanation);
   const customer =
@@ -402,7 +410,7 @@ export async function getOverview(
   });
 
   const criticalLeads = eligibleLeads.filter((row) => {
-    const score = selectCurrentScore(row.scores);
+    const score = selectCurrentScore(row.currentScores);
     return score?.priorityBand === "CRITICAL";
   });
 
@@ -458,13 +466,13 @@ export async function listLeadQueue(
         leadId: a.id,
         registeredAt: a.registeredAt,
         registeredAtAmbiguous: a.registeredAtAmbiguous,
-        currentScore: selectCurrentScore(a.scores)
+        currentScore: selectCurrentScore(a.currentScores)
       },
       {
         leadId: b.id,
         registeredAt: b.registeredAt,
         registeredAtAmbiguous: b.registeredAtAmbiguous,
-        currentScore: selectCurrentScore(b.scores)
+        currentScore: selectCurrentScore(b.currentScores)
       }
     )
   );
@@ -514,18 +522,7 @@ export async function getLeadDetail(
       company: { select: { id: true, name: true } },
       customer: { select: { companyId: true, normalizedName: true } },
       motorcycle: { select: { sku: true, brand: true, line: true } },
-      scores: {
-        where: { scoreVersion: PRIORITY_SCORE_VERSION },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        select: {
-          id: true,
-          scoreVersion: true,
-          totalScore: true,
-          priorityBand: true,
-          explanation: true,
-          createdAt: true
-        }
-      },
+      currentScores: currentScoreSelect,
       assignments: {
         where: { assignedFor: businessDate },
         take: 1,
@@ -574,7 +571,7 @@ export async function getLeadDetail(
 
   if (!lead || lead.companyId !== scopedCompanyId) return null;
 
-  const currentScore = selectCurrentScore(lead.scores);
+  const currentScore = selectCurrentScore(lead.currentScores);
   const explanation = currentScore ? parseScoreExplanation(currentScore.explanation) : null;
   const customer =
     lead.customer && lead.customer.companyId === scopedCompanyId ? lead.customer : null;

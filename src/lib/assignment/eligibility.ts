@@ -34,22 +34,32 @@ export type ScoreRow = {
 };
 
 /**
- * Current valid score = latest `hybrid-v1` row for the lead.
- * Rows from other score versions are ignored even if newer by createdAt.
- * Among `hybrid-v1` rows (including pre-5.1 store-scoped fingerprints),
- * `createdAt DESC` then `id DESC` picks the latest valid identity.
+ * The explicit record of which history row is a lead's current score for a
+ * score version (a `LeadCurrentScore` row with its `leadScore`).
  */
-export function selectCurrentScore<T extends ScoreRow>(
-  scores: readonly T[],
+export type CurrentScorePointer<T> = {
+  scoreVersion: string;
+  leadScore: T;
+};
+
+/**
+ * Current score = the row the scoring stage recorded as current for the
+ * requested score version. It is never inferred from `createdAt`: a lead
+ * whose data returns to an earlier state reuses an older history row, and
+ * that older row is the current one.
+ *
+ * Pointers of other score versions are ignored. The store allows one pointer
+ * per lead and version, so more than one match means the caller mixed leads.
+ */
+export function selectCurrentScore<T>(
+  pointers: readonly CurrentScorePointer<T>[],
   scoreVersion: string = ASSIGNMENT_SCORE_VERSION
 ): T | null {
-  const current = scores.filter((score) => score.scoreVersion === scoreVersion);
-  if (current.length === 0) return null;
-  return [...current].sort((a, b) => {
-    const created = b.createdAt.getTime() - a.createdAt.getTime();
-    if (created !== 0) return created;
-    return b.id.localeCompare(a.id);
-  })[0] ?? null;
+  const matches = pointers.filter((pointer) => pointer.scoreVersion === scoreVersion);
+  if (matches.length > 1) {
+    throw new Error(`Expected at most one current ${scoreVersion} score, received ${matches.length}.`);
+  }
+  return matches[0]?.leadScore ?? null;
 }
 
 export type PriorityLead = {
