@@ -91,25 +91,16 @@ jobs:
           bun run db:deploy
           bunx prisma migrate status
 
-      # Known pre-existing drift (documented in PR #1): migration
-      # 20260915020000_advisor_assignment leaves two column defaults and an
-      # ON DELETE RESTRICT foreign key on "Assignment" that schema.prisma does
-      # not declare. Reported as a warning until a corrective migration is
-      # approved; remove continue-on-error once it lands.
-      - name: Check that migrations match the Prisma schema (non-blocking)
-        continue-on-error: true
+      # A database built only from the migrations must match schema.prisma.
+      # Exit code 2 means drift: add a migration, never edit an applied one.
+      - name: Check that migrations match the Prisma schema
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
-        run: |
-          status=0
-          bunx prisma migrate diff \
-            --from-url "$DATABASE_URL" \
-            --to-schema-datamodel prisma/schema.prisma \
-            --exit-code || status=$?
-          if [ "$status" -ne 0 ]; then
-            echo "::warning title=Schema drift::Applied migrations do not match prisma/schema.prisma (prisma migrate diff exit $status)."
-            exit "$status"
-          fi
+        run: >-
+          bunx prisma migrate diff
+          --from-url "$DATABASE_URL"
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
 
       - name: Type check
         run: bun run typecheck
