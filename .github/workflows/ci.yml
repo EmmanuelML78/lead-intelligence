@@ -144,6 +144,22 @@ jobs:
           bun run verify:counts
           bun run scripts/ci-idempotency-check.ts compare "$RUNNER_TEMP/table-counts.json"
 
+      # Keeps the deployment tooling from docs/deployment-runbook.md working:
+      # target guard, status report, and a score-only recalculation that must
+      # leave assignments and ingested data byte-identical.
+      - name: Exercise deployment tooling
+        env:
+          DATABASE_URL: ${{ env.PIPELINE_DATABASE_URL }}
+        run: |
+          bun run ops:db-status --expect-host localhost
+          bun run ops:fingerprint snapshot "$RUNNER_TEMP/before-rescore.json" --expect-host localhost
+          bun run ops:rescore --expect-host localhost --decision-at 2026-09-14T20:00:00.000Z --apply
+          bun run ops:fingerprint compare "$RUNNER_TEMP/before-rescore.json" --expect-host localhost             --must-match Assignment,Lead,Customer,Conversation,Message,Advisor,PipelineRun,PipelineIssue
+          if bun run ops:db-status --expect-host some-other-database; then
+            echo "::error::The target guard accepted a database it was not told to expect."
+            exit 1
+          fi
+
       - name: Check company isolation in the data-access layer
         env:
           DATABASE_URL: ${{ env.PIPELINE_DATABASE_URL }}

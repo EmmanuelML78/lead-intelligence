@@ -120,7 +120,7 @@ Do **not** set `AI_API_KEY` on Vercel. The dashboard only reads Postgres. Gemini
 
 Health: `GET /api/health` → `{ "status": "ok", "database": "reachable" }` (or 503). No secrets, versions, or counts.
 
-Migrations: `bun run db:migrate:deploy` (`prisma migrate deploy`). Never `prisma db push` in production.
+Migrations: `bun run db:migrate:deploy` (`prisma migrate deploy`). Never `prisma db push` in production. Follow [docs/deployment-runbook.md](docs/deployment-runbook.md) for any release that includes a migration: backup, rehearsal on a copy, order of migration and merge, score recalculation and rollback.
 
 Public URL: [https://lead-intelligence-iota.vercel.app](https://lead-intelligence-iota.vercel.app)
 
