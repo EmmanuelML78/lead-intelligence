@@ -78,24 +78,47 @@ export function trustedRegistrationMs(lead: {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** A missing or non-finite score is not a usable score. */
+function usableScore(lead: PriorityLead): number | null {
+  const value = lead.currentScore?.totalScore;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Locale-independent string order (UTF-16 code units). */
+function compareIds(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /**
- * Deterministic queue order:
- * 1. current hybrid-v1 totalScore DESC (bands never override the number)
- * 2. trusted registration time ASC when BOTH sides have a safe date
- * 3. leadId ASC
+ * Total, deterministic queue order. Each key is a complete ordering of its
+ * own values and the last key is unique, so the comparison is transitive and
+ * antisymmetric and any permutation of the same leads sorts identically.
  *
- * Ambiguous or missing registration times are skipped rather than ordered.
+ * 1. Current totalScore DESC (bands never override the number). Leads
+ *    without a usable score (none, or a non-finite value) rank last.
+ * 2. Trusted registration time ASC: the lead that has waited longest first.
+ *    A registration time is unknown when it is missing, ambiguous or
+ *    invalid. Unknown times rank after every trusted time and are equal to
+ *    each other; their stored value is never compared.
+ * 3. leadId ASC by code unit, as the final tie-break.
  */
 export function compareAssignableLeads(a: PriorityLead, b: PriorityLead): number {
-  const aScore = a.currentScore?.totalScore ?? Number.NEGATIVE_INFINITY;
-  const bScore = b.currentScore?.totalScore ?? Number.NEGATIVE_INFINITY;
+  const aScore = usableScore(a);
+  const bScore = usableScore(b);
   if (aScore !== bScore) {
-    return bScore - aScore;
+    if (aScore === null) return 1;
+    if (bScore === null) return -1;
+    return aScore > bScore ? -1 : 1;
   }
+
   const aTime = trustedRegistrationMs(a);
   const bTime = trustedRegistrationMs(b);
-  if (aTime !== null && bTime !== null && aTime !== bTime) {
-    return aTime - bTime;
+  if (aTime !== bTime) {
+    if (aTime === null) return 1;
+    if (bTime === null) return -1;
+    return aTime < bTime ? -1 : 1;
   }
-  return a.leadId.localeCompare(b.leadId);
+
+  return compareIds(a.leadId, b.leadId);
 }
