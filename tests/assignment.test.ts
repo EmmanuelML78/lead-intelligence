@@ -83,39 +83,41 @@ test("SIN_GESTION/CONTACTADO/NO_CONTESTA/COTIZACION_ENVIADA/EN_PROCESO are assig
   assert.equal(isAssignableStatus("UNKNOWN"), false);
 });
 
-test("selectCurrentScore uses latest hybrid-v1 and ignores other versions even if newer", () => {
+test("selectCurrentScore returns the recorded hybrid-v1 score and ignores other versions even if newer", () => {
   const hybrid = {
-    id: "old-v1",
     scoreVersion: "hybrid-v1",
-    totalScore: 41,
-    createdAt: new Date("2026-09-13T00:00:00.000Z")
+    leadScore: { id: "old-v1", totalScore: 41, createdAt: new Date("2026-09-13T00:00:00.000Z") }
   };
   const otherVersionNewer = {
-    id: "new-other",
     scoreVersion: "hybrid-v0",
-    totalScore: 99,
-    createdAt: new Date("2026-09-15T00:00:00.000Z")
+    leadScore: { id: "new-other", totalScore: 99, createdAt: new Date("2026-09-15T00:00:00.000Z") }
   };
   const selected = selectCurrentScore([otherVersionNewer, hybrid]);
   assert.equal(selected?.id, "old-v1");
   assert.equal(selected?.totalScore, 41);
+  assert.equal(selectCurrentScore([otherVersionNewer, hybrid], "hybrid-v0")?.id, "new-other");
 });
 
-test("selectCurrentScore prefers the later hybrid-v1 row after the inventory semantic correction", () => {
-  const preCorrection = {
-    id: "pre-51",
+test("selectCurrentScore returns the recorded score even when its createdAt is the oldest in the history", () => {
+  // Data went A -> B -> A: row A was created first and is current again.
+  const recordedCurrent = {
     scoreVersion: "hybrid-v1",
-    totalScore: 22,
-    createdAt: new Date("2026-09-14T10:00:00.000Z")
+    leadScore: { id: "score-a", totalScore: 48, createdAt: new Date("2026-09-14T10:00:00.000Z") }
   };
-  const postCorrection = {
-    id: "post-51",
-    scoreVersion: "hybrid-v1",
-    totalScore: 48,
-    createdAt: new Date("2026-09-14T18:00:00.000Z")
-  };
-  const selected = selectCurrentScore([preCorrection, postCorrection]);
-  assert.equal(selected?.id, "post-51");
+  assert.equal(selectCurrentScore([recordedCurrent])?.id, "score-a");
+});
+
+test("selectCurrentScore returns null without a recorded score and rejects an ambiguous record", () => {
+  assert.equal(selectCurrentScore([]), null);
+  assert.equal(selectCurrentScore([{ scoreVersion: "hybrid-v0", leadScore: { id: "other" } }]), null);
+  assert.throws(
+    () =>
+      selectCurrentScore([
+        { scoreVersion: "hybrid-v1", leadScore: { id: "one" } },
+        { scoreVersion: "hybrid-v1", leadScore: { id: "two" } }
+      ]),
+    /at most one current hybrid-v1 score/
+  );
 });
 
 test("queue order is totalScore DESC, then trusted registration ASC, then leadId; bands never override", () => {

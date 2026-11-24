@@ -274,25 +274,52 @@ test("explanation contains factual urgency, intent, and catalog inventory reason
   assert.doesNotMatch(score.explanation.summary, /punto de venta|sede|stock físico/i);
 });
 
-test("identical score input is idempotent and a scoreVersion change creates history", async () => {
+/** In-memory store that keeps the history and the current-score record apart. */
+function memoryScoreStore() {
   const rows = new Map<string, LeadScoreCreate & { id: string }>();
+  const current = new Map<string, string>();
+  const currentWrites: string[] = [];
   const key = (identity: LeadScoreIdentity) =>
     `${identity.leadId}|${identity.scoreVersion}|${identity.inputFingerprint}`;
+  const currentKey = (ref: { leadId: string; scoreVersion: string }) => `${ref.leadId}|${ref.scoreVersion}`;
   const store: LeadScoreStore = {
     async findByIdentity(identity) {
-      return rows.get(key(identity)) ?? null;
+      const row = rows.get(key(identity));
+      return row ? { id: row.id, isCurrent: current.get(currentKey(identity)) === row.id } : null;
     },
-    async create(input) {
+    async createAsCurrent(input) {
       const id = `score-${rows.size + 1}`;
       rows.set(key(input), { ...input, id });
+      current.set(currentKey(input), id);
+      currentWrites.push(id);
       return { id };
+    },
+    async refresh(id, input) {
+      const existing = [...rows.values()].find((row) => row.id === id);
+      if (!existing) throw new Error("missing score");
+      rows.set(key(existing), { ...input, id });
+    },
+    async setCurrent(ref) {
+      current.set(currentKey(ref), ref.leadScoreId);
+      currentWrites.push(ref.leadScoreId);
     }
   };
+  return {
+    store,
+    rows,
+    currentWrites,
+    currentId: (leadId: string, scoreVersion: string) => current.get(currentKey({ leadId, scoreVersion })) ?? null
+  };
+}
+
+test("identical score input is idempotent and a scoreVersion change creates history", async () => {
+  const { store, rows, currentId, currentWrites } = memoryScoreStore();
   const score = leadScore();
 
   assert.equal((await persistLeadScore(store, score)).outcome, "created");
   assert.equal((await persistLeadScore(store, score)).outcome, "reused");
   assert.equal(rows.size, 1);
+  assert.deepEqual(currentWrites, ["score-1"], "re-scoring unchanged input must not rewrite the current score");
 
   const nextVersion = {
     ...score,
@@ -300,27 +327,36 @@ test("identical score input is idempotent and a scoreVersion change creates hist
   };
   assert.equal((await persistLeadScore(store, nextVersion)).outcome, "created");
   assert.equal(rows.size, 2);
+  assert.equal(currentId(score.leadId, score.scoreVersion), "score-1", "each version keeps its own current score");
+  assert.equal(currentId(score.leadId, "hybrid-v2"), "score-2");
+});
+
+test("when the input goes A -> B -> A, history row A is reused and becomes the current score again", async () => {
+  const { store, rows, currentId, currentWrites } = memoryScoreStore();
+  const stateA = leadScore();
+  const stateB = leadScore({ firstContactAt: new Date("2026-09-14T19:00:00.000Z") });
+  assert.notEqual(stateA.inputFingerprint, stateB.inputFingerprint);
+
+  const a = await persistLeadScore(store, stateA);
+  assert.equal(currentId(stateA.leadId, stateA.scoreVersion), a.id);
+
+  const b = await persistLeadScore(store, stateB);
+  assert.equal(b.outcome, "created");
+  assert.equal(currentId(stateA.leadId, stateA.scoreVersion), b.id);
+
+  const backToA = await persistLeadScore(store, stateA);
+  assert.equal(backToA.outcome, "reused");
+  assert.equal(backToA.id, a.id);
+  assert.equal(rows.size, 2, "history keeps both evaluations and adds no duplicate");
+  assert.equal(currentId(stateA.leadId, stateA.scoreVersion), a.id, "A must be current again");
+  assert.deepEqual(currentWrites, [a.id, b.id, a.id]);
+
+  await persistLeadScore(store, stateA);
+  assert.deepEqual(currentWrites, [a.id, b.id, a.id], "an unchanged re-run writes nothing");
 });
 
 test("persist refreshes explanation copy on an identical identity without inserting a duplicate", async () => {
-  const rows = new Map<string, LeadScoreCreate & { id: string }>();
-  const key = (identity: LeadScoreIdentity) =>
-    `${identity.leadId}|${identity.scoreVersion}|${identity.inputFingerprint}`;
-  const store: LeadScoreStore = {
-    async findByIdentity(identity) {
-      return rows.get(key(identity)) ?? null;
-    },
-    async create(input) {
-      const id = "score-refresh";
-      rows.set(key(input), { ...input, id });
-      return { id };
-    },
-    async refresh(id, input) {
-      const current = [...rows.values()].find((row) => row.id === id);
-      if (!current) throw new Error("missing score");
-      rows.set(key(current), { ...input, id });
-    }
-  };
+  const { store, rows } = memoryScoreStore();
   const score = leadScore();
   assert.equal((await persistLeadScore(store, score)).outcome, "created");
   const updated = {
@@ -332,20 +368,25 @@ test("persist refreshes explanation copy on an identical identity without insert
   assert.equal([...rows.values()][0]?.explanation.summary, "Prioridad alta. copy refresh.");
 });
 
-test("persist treats a unique-identity race as reused instead of crashing", async () => {
+test("persist treats a unique-identity race as reused, and still records it as current", async () => {
   const score = leadScore();
   let created = false;
+  const currentWrites: string[] = [];
   const store: LeadScoreStore = {
     async findByIdentity() {
-      return created ? { id: "score-raced" } : null;
+      return created ? { id: "score-raced", isCurrent: false } : null;
     },
-    async create() {
+    async createAsCurrent() {
       created = true;
       throw new Error("Unique constraint failed");
+    },
+    async setCurrent(ref) {
+      currentWrites.push(ref.leadScoreId);
     }
   };
 
   const result = await persistLeadScore(store, score);
   assert.equal(result.outcome, "reused");
   assert.equal(result.id, "score-raced");
+  assert.deepEqual(currentWrites, ["score-raced"]);
 });

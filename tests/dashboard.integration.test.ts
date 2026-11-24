@@ -152,6 +152,19 @@ test(
           }
         ]
       });
+      // Scores inserted directly bypass the scoring stage, which is what
+      // records the current score, so the fixture records it explicitly.
+      const insertedScores = await prisma.leadScore.findMany({
+        where: { leadId: { in: [leadA, leadB] } },
+        select: { id: true, leadId: true, scoreVersion: true }
+      });
+      await prisma.leadCurrentScore.createMany({
+        data: insertedScores.map((row) => ({
+          leadId: row.leadId,
+          scoreVersion: row.scoreVersion,
+          leadScoreId: row.id
+        }))
+      });
       await prisma.assignment.createMany({
         data: [
           {

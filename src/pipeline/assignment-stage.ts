@@ -67,13 +67,19 @@ export async function runAssignmentStage(
         status: true,
         registeredAt: true,
         registeredAtAmbiguous: true,
-        scores: {
-          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        // Explicit current score, never inferred from LeadScore.createdAt.
+        currentScores: {
+          where: { scoreVersion: ASSIGNMENT_SCORE_VERSION },
           select: {
-            id: true,
             scoreVersion: true,
-            totalScore: true,
-            createdAt: true
+            leadScore: {
+              select: {
+                id: true,
+                scoreVersion: true,
+                totalScore: true,
+                createdAt: true
+              }
+            }
           }
         }
       }
@@ -103,7 +109,7 @@ export async function runAssignmentStage(
   }));
 
   const leads: AssignmentLead[] = leadRows.map((lead) => {
-    const currentScore = selectCurrentScore(lead.scores);
+    const currentScore = selectCurrentScore(lead.currentScores);
     return {
       leadId: lead.id,
       companyId: lead.companyId,

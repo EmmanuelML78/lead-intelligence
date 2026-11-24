@@ -330,17 +330,24 @@ An advisor is eligible when **all** of these hold: `active = true`, `companyId` 
 
 ### Current score selection
 
-The current valid score is the latest `LeadScore` row with `scoreVersion = hybrid-v1`, ordered by `createdAt DESC` then `id DESC`. Other versions are ignored even if newer by `createdAt`. Among `hybrid-v1` rows (pre- and post-5.1 inventory fingerprints), the latest identity wins. Bands never override `totalScore`.
+History and validity are stored separately:
+
+- `LeadScore` is the history: one row per `(leadId, scoreVersion, inputFingerprint)`, never deleted. An evaluation whose inputs match an earlier one reuses that row and refreshes its computed values in place (same inputs, same identity); rows of other fingerprints are not touched.
+- `LeadCurrentScore` records which history row is current: one row per `(leadId, scoreVersion)` pointing at a `LeadScore`. A composite foreign key guarantees the score belongs to the same lead and version.
+
+The scoring stage sets the current score on every evaluation, in the same transaction as the insert when the row is new. The current score is therefore the result of the latest evaluation and is never inferred from `createdAt`: when a lead's data changes from A to B and back to A, row A is reused and becomes current again, while B stays in the history. Re-scoring unchanged data leaves the `LeadCurrentScore` record untouched. If scoring a lead fails, its previous current score stays in place and a `LEAD_SCORING_FAILED` issue is recorded. Pipeline runs are not serialized against each other: if two runs overlap, the last evaluation written wins, so runs should not be executed concurrently.
+
+Readers (assignment stage, dashboard queue, lead detail, KPIs) load the current score through `LeadCurrentScore` filtered by `scoreVersion = hybrid-v1`; other versions are ignored. A lead without a `LeadCurrentScore` row has no current score. `Assignment.leadScoreId` keeps the score that was current when the assignment was written and is not updated when the current score changes later. Bands never override `totalScore`.
 
 ### Queue order
 
 Inside each company+sales-point pool:
 
-1. `totalScore` DESC
-2. trusted `registeredAt` ASC only when **both** leads have a non-ambiguous registration timestamp
-3. `leadId` ASC
+1. current `totalScore` DESC; a lead without a usable score (none, or a non-finite value) ranks last
+2. trusted `registeredAt` ASC, so the lead that has waited longest goes first; unknown registration times rank after every trusted one
+3. `leadId` ASC by code unit (locale-independent), as the final tie-break
 
-Ambiguous or missing registration times are skipped rather than ordered.
+A registration time is unknown when it is missing, flagged ambiguous, or invalid. Unknown times are equal to each other and their stored value is never compared, so an untrusted date can neither promote nor demote a lead beyond that rule. Each criterion orders all of its values and the last one is unique, which makes the order total: it is transitive, antisymmetric and independent of the input order. The previous rule compared dates only when both were trusted and otherwise jumped to `leadId`, which allowed cycles between three leads with equal scores.
 
 ### Capacity and business date
 
@@ -384,7 +391,7 @@ A cookie `demo_company_id` remembers the selected company. `requireCompanyId` is
 
 ### Current score
 
-Queue and detail use the same `selectCurrentScore` rule as Milestone 6: latest `hybrid-v1` row (`createdAt DESC`, `id DESC`). Other versions are ignored even if newer.
+Queue and detail use the same `selectCurrentScore` rule as Milestone 6: the `hybrid-v1` score recorded in `LeadCurrentScore`. Other versions are ignored even if newer.
 
 ### Data quality counts
 

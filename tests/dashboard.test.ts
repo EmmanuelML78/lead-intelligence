@@ -28,25 +28,15 @@ test("leadScopeWhere always requires companyId and never drops it", () => {
   assert.equal(where.id, "LD-1");
 });
 
-test("current hybrid-v1 score selection ignores newer non-v1 rows", () => {
+test("current hybrid-v1 score selection ignores the current score of other versions", () => {
   const selected = selectCurrentScore([
     {
-      id: "new-other",
       scoreVersion: "hybrid-v0",
-      totalScore: 99,
-      createdAt: new Date("2026-09-15T00:00:00.000Z")
+      leadScore: { id: "new-other", totalScore: 99, createdAt: new Date("2026-09-15T00:00:00.000Z") }
     },
     {
-      id: "current-v1",
       scoreVersion: "hybrid-v1",
-      totalScore: 61.2,
-      createdAt: new Date("2026-09-14T12:00:00.000Z")
-    },
-    {
-      id: "old-v1",
-      scoreVersion: "hybrid-v1",
-      totalScore: 20,
-      createdAt: new Date("2026-09-13T00:00:00.000Z")
+      leadScore: { id: "current-v1", totalScore: 61.2, createdAt: new Date("2026-09-14T12:00:00.000Z") }
     }
   ]);
   assert.equal(selected?.id, "current-v1");
