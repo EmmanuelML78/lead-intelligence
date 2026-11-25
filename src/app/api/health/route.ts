@@ -1,25 +1,22 @@
 import { prisma } from "../../../lib/db/client";
+import { createHealthChecker, prismaHealthProbes } from "../../../lib/health/health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type HealthBody = {
-  status: "ok" | "error";
-  database: "reachable" | "unreachable";
-};
+// One checker per server instance, so the schema inspection is cached
+// across requests. See src/lib/health/health.ts.
+const check = createHealthChecker(prismaHealthProbes(prisma));
 
-function json(body: HealthBody, status: number) {
+/**
+ * 200 when the database is reachable and has the schema this build needs.
+ * 503 when it is unreachable, or reachable but missing migrations, tables,
+ * columns or enum values the deployed code requires.
+ */
+export async function GET() {
+  const { httpStatus, body } = await check();
   return Response.json(body, {
-    status,
+    status: httpStatus,
     headers: { "Cache-Control": "no-store" }
   });
-}
-
-export async function GET() {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return json({ status: "ok", database: "reachable" }, 200);
-  } catch {
-    return json({ status: "error", database: "unreachable" }, 503);
-  }
 }

@@ -68,7 +68,7 @@ async function main() {
   await check("health endpoint reports a reachable database", async () => {
     const response = await get("/api/health");
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: "ok", database: "reachable" });
+    assert.deepEqual(await response.json(), { status: "ok", database: "reachable", schema: "compatible" });
   });
 
   for (const page of DASHBOARD_PAGES) {
