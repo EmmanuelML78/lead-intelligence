@@ -517,3 +517,54 @@ test(
     }
   }
 );
+
+test(
+  "integration: messages that differ only in what a model would not see share one transcript but are stored exactly",
+  { skip, timeout: 60_000 },
+  async () => {
+    const fixture = await createFixture("REC-CANON");
+    try {
+      await persist(fixture, [msg("cliente", "10:00", "Hola"), msg("asesor", "10:01", "Buenas")]);
+      const hashBefore = (await prisma.conversation.findUniqueOrThrow({ where: { id: fixture.conversation } })).transcriptHash;
+
+      // Same words for a reader; different bytes in the source.
+      const variant = [msg("Cliente", "10:00", "Hola  "), msg("ASESOR", "10:01", " Buenas")];
+      const { result } = await persist(fixture, variant);
+
+      assert.deepEqual(await storedTranscript(fixture), indexed(variant), "the stored rows mirror the source exactly");
+      assert.deepEqual(
+        { added: result.messagesAdded, removed: result.messagesRemoved, changed: result.transcriptChanged },
+        { added: 2, removed: 2, changed: true },
+        "the rows did change, and that is reported"
+      );
+      const after = await prisma.conversation.findUniqueOrThrow({ where: { id: fixture.conversation } });
+      assert.equal(after.transcriptHash, hashBefore, "it is the same transcript for a model");
+      assert.equal(await prisma.conversationSnapshot.count({ where: { conversationId: fixture.conversation } }), 1);
+    } finally {
+      await removeFixture(fixture);
+    }
+  }
+);
+
+test(
+  "integration: a long conversation is reconciled without sending its whole id list to the database",
+  { skip, timeout: 120_000 },
+  async () => {
+    const fixture = await createFixture("REC-LONG");
+    try {
+      const many = Array.from({ length: 5_000 }, (_, index) => msg(index % 2 === 0 ? "cliente" : "asesor", null, `mensaje ${index}`));
+      const first = await persist(fixture, many);
+      assert.equal(first.result.error, undefined);
+      assert.equal(first.result.messagesAdded, 5_000);
+
+      const again = await persist(fixture, many);
+      assert.deepEqual({ added: again.result.messagesAdded, removed: again.result.messagesRemoved }, { added: 0, removed: 0 });
+
+      const shorter = await persist(fixture, many.slice(0, 4_990));
+      assert.equal(shorter.result.messagesRemoved, 10);
+      assert.equal(await prisma.message.count({ where: { conversationId: fixture.conversation } }), 4_990);
+    } finally {
+      await removeFixture(fixture);
+    }
+  }
+);

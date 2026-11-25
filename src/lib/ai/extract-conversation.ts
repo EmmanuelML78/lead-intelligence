@@ -2,7 +2,7 @@ import type { CatalogMotorcycle } from "../normalization/motorcycle";
 import { matchMotorcycle } from "../normalization/motorcycle";
 import { verifyEvidence, type DroppedEvidence } from "./evidence";
 import { AI_PROMPT_VERSION, buildSystemPrompt, buildUserPrompt } from "./prompt";
-import { AiProviderError, type AiExtractionProvider } from "./provider";
+import { AiProviderError, isRateLimitFailure, type AiExtractionProvider } from "./provider";
 import { AI_EXTRACTION_VERSION, aiExtractionResultSchema, type AiExtractionResult } from "./schema";
 import { buildCanonicalTranscript, conversationHash, type TranscriptMessage } from "./transcript";
 
@@ -174,7 +174,7 @@ export async function extractConversation(input: ExtractConversationInput): Prom
       }
       const message = error instanceof Error ? error.message : String(error);
       const retryable = providerError ? providerError.retryable : true;
-      const rateLimited = providerError?.status === 429;
+      const rateLimited = isRateLimitFailure(providerError?.status ?? null, message);
       const retryAfterMs = providerError?.retryAfterMs ?? null;
       const failed = (detail = ""): ExtractConversationResult => ({
         outcome: "provider_failed",

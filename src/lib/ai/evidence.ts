@@ -10,9 +10,16 @@ import type { TranscriptMessage } from "./transcript";
  * excerpt that does not appear in the conversation is not stored.
  *
  * Matching is tolerant of presentation, not of content: case, accents,
- * punctuation and spacing are ignored, and an ellipsis inside an excerpt
- * stands for skipped text. The words themselves must appear, in order,
- * inside a single message.
+ * punctuation and spacing are ignored, an ellipsis inside an excerpt stands
+ * for skipped text, and the role label or time the transcript shows before
+ * a message may be part of the quote. The words themselves must appear, in
+ * order, inside a single message. A number is one word including its
+ * separators, so "500.000" is not a quote of "2.500.000".
+ *
+ * This is a containment check, not comprehension. It cannot tell that a
+ * quote changes meaning when cut ("quiero crédito" inside "no quiero
+ * crédito"), and it does not equate two spellings of an amount ("8500000"
+ * and "8.500.000"): the first is kept, the second is dropped.
  *
  * Only the evidence is filtered. The extracted values are left as the model
  * returned them: clearing a value because its quote could not be matched
@@ -27,19 +34,35 @@ export type EvidenceVerification = {
   dropped: DroppedEvidence[];
 };
 
-/** Lower case, no accents, every run of non-alphanumeric characters as one space. */
+// Stand-ins kept through normalization: a separator inside a number, and ñ.
+const DIGIT_SEPARATOR = "\u0001";
+const ENYE = "\u0002";
+const KEPT = `${DIGIT_SEPARATOR}${ENYE}`;
+
+/**
+ * Lower case, no accents, every run of other characters as one space.
+ * Two things are deliberately not flattened: a "." or "," between digits
+ * stays inside its number, and "ñ" stays distinct from "n".
+ */
 export function normalizeForEvidence(text: string): string {
   return text
+    .toLowerCase()
+    .replace(/ñ/g, ENYE)
+    .replace(/(?<=\d)[.,](?=\d)/g, DIGIT_SEPARATOR)
     .normalize("NFKD")
     .replace(/\p{M}+/gu, "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(new RegExp(`[^\\p{L}\\p{N}${KEPT}]+`, "gu"), " ")
     .trim();
+}
+
+/** The transcript given to the model shows "[HH:MM] ROLE: text"; a quote may start with that prefix. */
+function withoutTranscriptLabel(excerpt: string): string {
+  return excerpt.replace(/^\s*(?:\[\d{1,2}:\d{2}\]\s*)?(?:CUSTOMER|ADVISOR|UNKNOWN)\s*:\s*/i, "");
 }
 
 /** True when the excerpt's words appear in order inside the (already normalized) message. */
 function excerptAppearsIn(excerpt: string, normalizedMessage: string): boolean {
-  const fragments = excerpt
+  const fragments = withoutTranscriptLabel(excerpt)
     .split(/\.{3,}|…/u)
     .map(normalizeForEvidence)
     .filter((fragment) => fragment.length > 0);
@@ -48,7 +71,7 @@ function excerptAppearsIn(excerpt: string, normalizedMessage: string): boolean {
   const haystack = ` ${normalizedMessage} `;
   let from = 0;
   for (const fragment of fragments) {
-    // Whole words only: "125" must not match inside "1250".
+    // Whole words only: "125" must not match inside "1250", nor "500.000" inside "2.500.000".
     const at = haystack.indexOf(` ${fragment} `, from);
     if (at === -1) return false;
     from = at + fragment.length + 1;

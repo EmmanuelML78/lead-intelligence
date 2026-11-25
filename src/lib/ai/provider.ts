@@ -34,6 +34,19 @@ export interface AiExtractionProvider {
   extract(input: AiExtractionProviderInput, options?: AiExtractionProviderOptions): Promise<AiExtractionProviderOutput>;
 }
 
+/**
+ * Whether a failure means "stop sending requests".
+ *
+ * When the provider answered, its status decides: only 429 is a rate limit.
+ * A 500 whose body happens to mention a quota is a server error, not a
+ * reason to stop a whole batch. The text is consulted only when there is no
+ * status to go by.
+ */
+export function isRateLimitFailure(status: number | null, message: string): boolean {
+  if (status !== null) return status === 429;
+  return /(?:\b429\b|RESOURCE_EXHAUSTED|quota|rate[\s_-]?limit)/i.test(message);
+}
+
 export type AiProviderErrorKind =
   /** The request never produced a response: DNS, connection reset, TLS. */
   | "network"

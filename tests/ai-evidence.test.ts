@@ -20,7 +20,9 @@ function dropped(evidence: Record<string, string[]>): string[] {
 test("normalization ignores case, accents, punctuation and spacing, and nothing else", () => {
   assert.equal(normalizeForEvidence("  ¿De CONTADO,  o   financiada?  "), "de contado o financiada");
   assert.equal(normalizeForEvidence("Qué más pues"), "que mas pues");
-  assert.equal(normalizeForEvidence("$4.990.000"), "4 990 000");
+  assert.equal(normalizeForEvidence("$4.990.000"), normalizeForEvidence("4.990.000"), "the currency sign is presentation");
+  assert.notEqual(normalizeForEvidence("4.990.000"), normalizeForEvidence("4 990 000"), "a number keeps its separators");
+  assert.notEqual(normalizeForEvidence("año"), normalizeForEvidence("ano"), "ñ is a different letter, not an accent");
   assert.equal(normalizeForEvidence("¡¿...?!"), "");
 });
 
@@ -101,4 +103,48 @@ test("every hand-curated excerpt of the evaluation fixture is found in its own t
     assert.deepEqual(result.dropped, [], `${item.conversationId}: a human-verified quote was rejected`);
   }
   assert.ok(excerpts >= 60, `expected the fixture to exercise the matcher, found ${excerpts} excerpts`);
+});
+
+test("a number is one word with its separators: part of an amount is not a quote of it", () => {
+  const amounts: TranscriptMessage[] = [
+    { index: 0, sender: "cliente", sentTime: null, text: "tengo 2.500.000 ahorrados y puedo dar 2,5 millones de inicial" }
+  ];
+  const result = verifyEvidence(
+    {
+      budget: ["tengo 2.500.000 ahorrados", "500.000", "tengo 2.500", "2.500.000"],
+      downPayment: ["2,5 millones de inicial", "5 millones de inicial", "puedo dar 2"]
+    },
+    amounts
+  );
+  assert.deepEqual(result.evidence, {
+    budget: ["tengo 2.500.000 ahorrados", "2.500.000"],
+    downPayment: ["2,5 millones de inicial"]
+  });
+  assert.deepEqual(
+    result.dropped.map((entry) => entry.excerpt),
+    ["500.000", "tengo 2.500", "5 millones de inicial", "puedo dar 2"]
+  );
+});
+
+test("a different spelling of the same amount is not treated as a quote", () => {
+  const spelled: TranscriptMessage[] = [{ index: 0, sender: "cliente", sentTime: null, text: "mi presupuesto es 8.500.000" }];
+  assert.equal(verifyEvidence({ budget: ["8500000"] }, spelled).dropped.length, 1);
+  assert.equal(verifyEvidence({ budget: ["8.500.000"] }, spelled).dropped.length, 0);
+});
+
+test("ñ is not interchangeable with n", () => {
+  const year: TranscriptMessage[] = [{ index: 0, sender: "cliente", sentTime: null, text: "La compro este año" }];
+  assert.equal(verifyEvidence({ purchaseIntent: ["este ano"] }, year).dropped.length, 1);
+  assert.equal(verifyEvidence({ purchaseIntent: ["este año", "ESTE AÑO"] }, year).dropped.length, 0);
+});
+
+test("a quote may carry the role label and time the transcript shows before the message", () => {
+  const result = verifyEvidence(
+    {
+      paymentMethod: ["CUSTOMER: Financiada, tengo 2,0 millones para la inicial", "[08:08] CUSTOMER: Financiada"],
+      purchaseIntent: ["ADVISOR: Financiada"]
+    },
+    messages
+  );
+  assert.deepEqual(result.dropped, [], "the label is the transcript's, not part of what was said");
 });

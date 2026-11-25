@@ -3,7 +3,7 @@ import type { CatalogMotorcycle } from "../lib/normalization/motorcycle";
 import { mapWithConcurrency } from "../lib/ai/concurrency";
 import { DEFAULT_MAX_ATTEMPTS, extractConversation } from "../lib/ai/extract-conversation";
 import { AI_PROMPT_VERSION } from "../lib/ai/prompt";
-import type { AiExtractionProvider } from "../lib/ai/provider";
+import { isRateLimitFailure, type AiExtractionProvider } from "../lib/ai/provider";
 import { GeminiProvider } from "../lib/ai/providers/gemini";
 import { AI_EXTRACTION_VERSION } from "../lib/ai/schema";
 import { conversationHash, type TranscriptMessage } from "../lib/ai/transcript";
@@ -27,12 +27,15 @@ export type AiStageReport = {
   successes: number;
   validationFailures: number;
   providerFailures: number;
+  // modelCalls counts extractions started, including ones cancelled in flight.
   /** Conversations whose extraction could not be read from or written to the database. */
   storeFailures: number;
   skippedNoApiKey: number;
   skippedDueToLimit: number;
-  /** Not started, or cancelled while in flight, because the stage stopped. */
+  /** Not started, or cancelled while in flight, because a rate limit stopped the stage. */
   skippedDueToQuota: number;
+  /** Not started, or cancelled while in flight, because the caller cancelled the stage. */
+  skippedDueToCancellation: number;
   /** Conversations with no message text: there is nothing to extract, so the model is not called. */
   skippedEmptyTranscript: number;
   /** Evidence excerpts returned by the model that are not in the transcript, and so were not stored. */
@@ -56,6 +59,7 @@ function emptyReport(overrides: Partial<AiStageReport>): AiStageReport {
     skippedNoApiKey: 0,
     skippedDueToLimit: 0,
     skippedDueToQuota: 0,
+    skippedDueToCancellation: 0,
     skippedEmptyTranscript: 0,
     evidenceExcerptsDropped: 0,
     provider: null,
@@ -65,8 +69,9 @@ function emptyReport(overrides: Partial<AiStageReport>): AiStageReport {
   };
 }
 
+/** Text-only check, for failures that carry no HTTP status. See isRateLimitFailure in src/lib/ai/provider.ts. */
 export function isQuotaOrRateLimitError(message: string): boolean {
-  return /(?:\b429\b|RESOURCE_EXHAUSTED|quota|rate[\s_-]?limit)/i.test(message);
+  return isRateLimitFailure(null, message);
 }
 
 function parseNonNegativeInt(raw: string | undefined): number | null {
@@ -159,6 +164,7 @@ export async function runAiExtractionStage(
   let providerFailures = 0;
   let storeFailures = 0;
   let skippedDueToQuota = 0;
+  let skippedDueToCancellation = 0;
   let skippedEmptyTranscript = 0;
   let evidenceExcerptsDropped = 0;
 
@@ -168,6 +174,12 @@ export async function runAiExtractionStage(
   const onExternalAbort = () => stop.abort();
   if (options.signal?.aborted) stop.abort();
   else options.signal?.addEventListener("abort", onExternalAbort, { once: true });
+
+  /** Counts a conversation left unprocessed because the stage stopped, under the reason it stopped. */
+  const skipped = () => {
+    if (stoppedByQuota) skippedDueToQuota += 1;
+    else skippedDueToCancellation += 1;
+  };
 
   const storeFailed = (conversationId: string, action: string, error: unknown) => {
     storeFailures += 1;
@@ -185,7 +197,7 @@ export async function runAiExtractionStage(
     // end the whole stage and, with it, the pipeline run.
     try {
       if (stop.signal.aborted) {
-        skippedDueToQuota += 1;
+        skipped();
         return;
       }
       if (!hasText(conversation.messages)) {
@@ -225,7 +237,7 @@ export async function runAiExtractionStage(
       });
 
       if (result.outcome === "cancelled") {
-        skippedDueToQuota += 1;
+        skipped();
         return;
       }
 
@@ -238,7 +250,7 @@ export async function runAiExtractionStage(
           entityId: conversation.conversationId,
           message: `AI extraction for conversation ${conversation.conversationId} failed after ${result.attempts} attempt(s): ${result.message}`
         });
-        if (result.rateLimited || isQuotaOrRateLimitError(result.message)) {
+        if (result.rateLimited) {
           stoppedByQuota = true;
           stop.abort();
         }
@@ -317,6 +329,7 @@ export async function runAiExtractionStage(
       storeFailures,
       skippedDueToLimit,
       skippedDueToQuota,
+      skippedDueToCancellation,
       skippedEmptyTranscript,
       evidenceExcerptsDropped,
       provider: provider.name,

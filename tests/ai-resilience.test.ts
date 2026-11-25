@@ -341,6 +341,13 @@ test("a rate limit stops the stage and cancels the requests still in flight", as
   assert.deepEqual(aborted.sort(), ["CONV-2", "CONV-3"], "the two requests in flight were cancelled");
   assert.equal(report.providerFailures, 1);
   assert.equal(report.skippedDueToQuota, 5, "two cancelled in flight and three never started");
+  assert.equal(report.skippedDueToCancellation, 0);
+  assert.equal(
+    report.successes + report.providerFailures + report.validationFailures + report.storeFailures + report.cacheHits +
+      report.skippedDueToQuota + report.skippedDueToCancellation + report.skippedEmptyTranscript,
+    6,
+    "every conversation is accounted for exactly once"
+  );
   assert.equal(rows.length, 0);
   assert.equal(issues.length, 1, "cancelled conversations are not reported as failures");
 });
@@ -368,7 +375,8 @@ test("the stage can be cancelled from outside", async () => {
   });
   assert.equal(report.status, "STOPPED");
   assert.match(report.reason ?? "", /Cancelled/);
-  assert.equal(report.skippedDueToQuota, 3);
+  assert.equal(report.skippedDueToCancellation, 3);
+  assert.equal(report.skippedDueToQuota, 0, "a cancellation is not reported as a quota problem");
   assert.deepEqual(issues, []);
 });
 
@@ -395,4 +403,51 @@ test("without an API key the stage is skipped and reports every conversation as 
   assert.equal(report.modelCalls, 0);
   assert.deepEqual(issues, []);
   assert.equal(rows.length, 0);
+});
+
+test("a server error that merely mentions quotas does not stop the stage; only a real rate limit does", async () => {
+  const { db, rows } = fakeDb();
+  let calls = 0;
+  const provider: AiExtractionProvider = {
+    name: "fake",
+    model: "fake-model",
+    async extract(input) {
+      calls += 1;
+      if (input.userPrompt.includes("CONV-1")) {
+        throw new AiProviderError("status 500: internal error while checking quota for rate-limit 429", { retryable: false, kind: "http", status: 500 });
+      }
+      if (input.userPrompt.includes("CONV-2")) {
+        throw new AiProviderError("status 400: quota project not set", { retryable: false, kind: "http", status: 400 });
+      }
+      return { raw: valid() };
+    }
+  };
+  const { report } = await runAiExtractionStage(db, conversations(["CONV-1", "CONV-2", "CONV-3", "CONV-4"]), [], {
+    env: { AI_CONCURRENCY: "1" },
+    provider
+  });
+  assert.equal(report.status, "COMPLETED");
+  assert.equal(report.providerFailures, 2);
+  assert.equal(report.successes, 2, "the conversations after the failures are still processed");
+  assert.equal(report.skippedDueToQuota, 0);
+  assert.equal(rows.length, 2);
+  assert.equal(calls, 4);
+});
+
+test("a failure without an HTTP status is judged by its text, as before", async () => {
+  const { db } = fakeDb();
+  const provider: AiExtractionProvider = {
+    name: "fake",
+    model: "fake-model",
+    async extract() {
+      throw new AiProviderError("Gemini request failed with status 429: RESOURCE_EXHAUSTED quota", { retryable: false });
+    }
+  };
+  const { report } = await runAiExtractionStage(db, conversations(["CONV-1", "CONV-2", "CONV-3"]), [], {
+    env: { AI_CONCURRENCY: "1" },
+    provider
+  });
+  assert.equal(report.status, "STOPPED");
+  assert.equal(report.providerFailures, 1);
+  assert.equal(report.skippedDueToQuota, 2);
 });

@@ -86,6 +86,20 @@ export class GeminiProvider implements AiExtractionProvider {
     const timer = setTimeout(() => timeout.abort(), this.timeoutMs);
     const signal = caller ? AbortSignal.any([timeout.signal, caller]) : timeout.signal;
 
+    // The signal is passed to fetch, which normally rejects when it aborts.
+    // The limit must not depend on that: racing every step against the
+    // signal makes it hold even if the transport never reacts.
+    const aborted = new Promise<never>((_, reject) => {
+      const fail = () => reject(signal.reason ?? new Error("aborted"));
+      if (signal.aborted) fail();
+      else signal.addEventListener("abort", fail, { once: true });
+    });
+    aborted.catch(() => undefined);
+    const bounded = <T>(step: Promise<T>): Promise<T> => {
+      step.catch(() => undefined);
+      return Promise.race([step, aborted]);
+    };
+
     /** Turns a failure of the exchange into the right error, whichever step it happened in. */
     const transportError = (error: unknown): AiProviderError => {
       if (caller?.aborted) {
@@ -109,7 +123,7 @@ export class GeminiProvider implements AiExtractionProvider {
     try {
       let response: Response;
       try {
-        response = await this.fetchImpl(url, {
+        response = await bounded(this.fetchImpl(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -125,7 +139,7 @@ export class GeminiProvider implements AiExtractionProvider {
             }
           }),
           signal
-        });
+        }));
       } catch (error) {
         throw transportError(error);
       }
@@ -133,7 +147,7 @@ export class GeminiProvider implements AiExtractionProvider {
       if (!response.ok) {
         let body = "";
         try {
-          body = await response.text();
+          body = await bounded(response.text());
         } catch (error) {
           if (signal.aborted) throw transportError(error);
         }
@@ -151,9 +165,12 @@ export class GeminiProvider implements AiExtractionProvider {
       let payload: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
       try {
         // The headers arrived, but the body can still stall or be cut off.
-        payload = (await response.json()) as typeof payload;
+        payload = (await bounded(response.json())) as typeof payload;
       } catch (error) {
         if (signal.aborted) throw transportError(error);
+        // A body that arrived and is not JSON will not improve by asking
+        // again. A connection cut while it was arriving is a network failure.
+        if (!(error instanceof SyntaxError)) throw transportError(error);
         throw new AiProviderError(
           `Gemini response body could not be read as JSON: ${error instanceof Error ? error.message : String(error)}`,
           { retryable: false, kind: "invalid_response", status: response.status }

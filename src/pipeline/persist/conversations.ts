@@ -28,7 +28,7 @@ export type ConversationPersistResult = {
   messagesAdded: number;
   /** Rows removed by this call because the source no longer contains them. */
   messagesRemoved: number;
-  /** True when a transcript was already recorded and the source now holds a different one. */
+  /** True when the conversation was already stored and this call added or removed message rows. */
   transcriptChanged: boolean;
   transcriptHash: string | null;
   error?: string;
@@ -50,6 +50,13 @@ export type ConversationPersistResult = {
  * extractions are never deleted; each one carries the hash of the transcript
  * it was made from, so it stays traceable after the messages change, and
  * readers can tell which extraction belongs to the current transcript.
+ *
+ * "Transcript" here means the canonical transcript (src/lib/ai/transcript.ts):
+ * the exact text a model is given. Two sets of messages that differ only in
+ * what that text does not carry (spaces around a message, the spelling of
+ * the sender) are the same transcript: same hash, same snapshot entry, same
+ * extraction, because a model would read the same thing. The `Message`
+ * rows, in contrast, always mirror the source exactly.
  *
  * Everything happens in one transaction: a reader sees the old transcript or
  * the new one, never a mixture, and a failure leaves the old one untouched.
@@ -118,12 +125,18 @@ export async function persistConversation(db: PrismaClient, conversation: Normal
         }
       });
 
-      const removed = await tx.message.deleteMany({
-        where: { conversationId: conversation.id, id: { notIn: rows.map((row) => row.id) } }
-      });
+      // Compare ids instead of sending the whole transcript in a NOT IN
+      // list: an unchanged conversation then costs one read and no write.
       // A row that already exists has, by construction of its id, exactly
-      // the same content, so it is skipped rather than rewritten.
-      const added = rows.length > 0 ? await tx.message.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
+      // the same content, so it is kept as it is.
+      const stored = await tx.message.findMany({ where: { conversationId: conversation.id }, select: { id: true } });
+      const storedIds = new Set(stored.map((row) => row.id));
+      const wantedIds = new Set(rows.map((row) => row.id));
+      const staleIds = stored.map((row) => row.id).filter((id) => !wantedIds.has(id));
+      const missing = rows.filter((row) => !storedIds.has(row.id));
+
+      const removed = staleIds.length > 0 ? await tx.message.deleteMany({ where: { id: { in: staleIds } } }) : { count: 0 };
+      const added = missing.length > 0 ? await tx.message.createMany({ data: missing }) : { count: 0 };
 
       await tx.conversationSnapshot.upsert({
         where: { conversationId_transcriptHash: { conversationId: conversation.id, transcriptHash } },
@@ -144,8 +157,7 @@ export async function persistConversation(db: PrismaClient, conversation: Normal
       return {
         messagesAdded: added.count,
         messagesRemoved: removed.count,
-        transcriptChanged:
-          previous !== null && previous.transcriptHash !== null && previous.transcriptHash !== transcriptHash
+        transcriptChanged: previous !== null && (added.count > 0 || removed.count > 0)
       };
     });
 

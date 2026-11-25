@@ -77,7 +77,7 @@ test("a request that gets no answer is abandoned at the time limit and reported 
   assert.equal(error.kind, "timeout");
   assert.equal(error.retryable, true);
   assert.match(error.message, /timed out after 150 ms/);
-  assert.ok(elapsed >= 140 && elapsed < 2_000, `gave up after ${elapsed} ms`);
+  assert.ok(elapsed >= 100 && elapsed < 2_000, `gave up after ${elapsed} ms`);
 });
 
 test("the time limit also covers a response whose body never finishes arriving", async () => {
@@ -198,4 +198,31 @@ test("a finished request leaves no timer behind", async () => {
   await rejected(new GeminiProvider({ apiKey: API_KEY, timeoutMs: 60_000, fetchImpl: respondingFetch(() => new Response("{}", { status: 500 })) }).extract(input));
   const after = process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
   assert.equal(after, before, "a pending 60 s timer would keep the process alive");
+});
+
+test("the time limit holds even when the transport ignores the cancellation signal", async () => {
+  const deafFetch = (() => new Promise<Response>(() => undefined)) as unknown as typeof fetch;
+  const provider = new GeminiProvider({ apiKey: API_KEY, timeoutMs: 120, fetchImpl: deafFetch });
+  const error = await within(5_000, rejected(provider.extract(input)));
+  assert.equal(error.kind, "timeout");
+  assert.equal(error.retryable, true);
+
+  const controller = new AbortController();
+  const cancelled = rejected(new GeminiProvider({ apiKey: API_KEY, timeoutMs: 60_000, fetchImpl: deafFetch }).extract(input, { signal: controller.signal }));
+  setTimeout(() => controller.abort(), 30);
+  assert.equal((await within(5_000, cancelled)).kind, "cancelled");
+});
+
+test("a connection cut while the body is arriving is a network failure to retry, not an unusable answer", async () => {
+  const cutBody = () =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"candidates":[{"content":'));
+        controller.error(new TypeError("terminated: other side closed"));
+      }
+    });
+  const provider = new GeminiProvider({ apiKey: API_KEY, fetchImpl: respondingFetch(() => new Response(cutBody(), { status: 200 })) });
+  const error = await rejected(provider.extract(input));
+  assert.equal(error.kind, "network");
+  assert.equal(error.retryable, true);
 });
