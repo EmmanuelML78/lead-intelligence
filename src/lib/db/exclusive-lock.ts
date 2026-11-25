@@ -27,6 +27,12 @@ import { prisma as sharedClient } from "./client";
  *   the lock is gone and another writer can take it. A heartbeat detects it
  *   within one interval. Commands run with `onLost: "fail-stop"`, which ends
  *   the process at once rather than letting it write unprotected.
+ * - A connection can also stop answering without being closed (frozen
+ *   server, black-holed network). A query on it would then wait for as long
+ *   as the operating system keeps the socket, which can be many minutes, so
+ *   every query on the lock session has its own time limit. A heartbeat that
+ *   is not answered in time counts as a lost lock: whether the server still
+ *   holds it cannot be known, and stopping is the safe answer.
  *
  * The stages themselves take no lock, so they stay usable as a library and
  * in tests. Each command that writes wraps its work in `withWriterLock`.
@@ -45,8 +51,39 @@ export const PIPELINE_WRITE_LOCK: LockKey = { classId: 0x4c494855, objectId: 1 }
 /** Exit code for "another operation is running" (EX_TEMPFAIL): retry later. */
 export const LOCK_BUSY_EXIT_CODE = 75;
 
-/** How often the lock session is verified; also the longest a lost lock can go unnoticed. */
+/** How often the lock session is verified. */
 export const DEFAULT_HEARTBEAT_MS = 5_000;
+
+/** How long one heartbeat may take before the lock is considered lost. */
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000;
+
+/**
+ * Longest a lost or unresponsive lock session can go unnoticed with the
+ * defaults: one interval until the next heartbeat starts, plus its time limit.
+ */
+export const DEFAULT_DETECTION_LIMIT_MS = DEFAULT_HEARTBEAT_MS + DEFAULT_HEARTBEAT_TIMEOUT_MS;
+
+/** How long taking the lock may take before giving up. */
+export const DEFAULT_ACQUIRE_TIMEOUT_MS = 15_000;
+
+/** Releasing is best effort: PostgreSQL frees the lock when the process and its connection end. */
+const RELEASE_TIMEOUT_MS = 3_000;
+
+class QueryTimeoutError extends Error {}
+
+/** Rejects when `work` has not settled in time. The abandoned promise is left to settle on its own. */
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new QueryTimeoutError()), timeoutMs);
+  });
+  work.catch(() => undefined);
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+function seconds(ms: number): string {
+  return `${Math.round(ms / 100) / 10} s`;
+}
 
 const APPLICATION_NAME_PREFIX = "lead-intelligence:";
 
@@ -93,6 +130,16 @@ export class PooledConnectionError extends Error {
   }
 }
 
+export class LockTimeoutError extends Error {
+  constructor(operation: string, timeoutMs: number) {
+    super(
+      `Cannot start "${operation}": the database did not answer within ${seconds(timeoutMs)} while taking the exclusive lock. ` +
+        "Nothing was written. Check that the database is reachable and try again."
+    );
+    this.name = "LockTimeoutError";
+  }
+}
+
 export class LockTargetMismatchError extends Error {
   constructor(operation: string) {
     super(
@@ -118,6 +165,10 @@ export type ExclusiveLockOptions = {
   /** Defaults to DIRECT_URL, then DATABASE_URL. */
   connectionUrl?: string;
   heartbeatMs?: number;
+  /** Time limit of one heartbeat query; unanswered in time means the lock is treated as lost. */
+  heartbeatTimeoutMs?: number;
+  /** Time limit for taking the lock and verifying it against the writing client. */
+  acquireTimeoutMs?: number;
   /**
    * The client the protected work writes with. It must see the lock, which
    * proves both connections reach the same database. Defaults to the shared
@@ -225,40 +276,59 @@ export async function withExclusiveLock<T>(
     datasourceUrl: buildLockConnectionUrl(resolveConnectionUrl(options.connectionUrl), operation)
   });
 
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+  const acquireTimeoutMs = options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS;
+
   let lostReason: string | null = null;
   let checking: Promise<void> | null = null;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let acquired = false;
 
   try {
-    const rows = await client.$queryRaw<Array<{ acquired: boolean; pid: number }>>`
-      SELECT pg_try_advisory_lock(${key.classId}::int, ${key.objectId}::int) AS acquired, pg_backend_pid() AS pid
-    `;
-    const backendPid = rows[0]?.pid ?? -1;
-    if (!rows[0]?.acquired) {
-      throw new LockBusyError(operation, await findHolder(client, key));
-    }
-    acquired = true;
-
-    if (protectedClient && !(await seesLock(protectedClient, key, backendPid))) {
-      throw new LockTargetMismatchError(operation);
-    }
+    // Taking the lock is bounded as a whole, so a database that accepts the
+    // connection but never answers cannot leave the command waiting forever.
+    const backendPid = await withTimeout(
+      (async () => {
+        const rows = await client.$queryRaw<Array<{ acquired: boolean; pid: number }>>`
+          SELECT pg_try_advisory_lock(${key.classId}::int, ${key.objectId}::int) AS acquired, pg_backend_pid() AS pid
+        `;
+        if (!rows[0]?.acquired) {
+          throw new LockBusyError(operation, await findHolder(client, key));
+        }
+        acquired = true;
+        const pid = rows[0].pid;
+        if (protectedClient && !(await seesLock(protectedClient, key, pid))) {
+          throw new LockTargetMismatchError(operation);
+        }
+        return pid;
+      })(),
+      acquireTimeoutMs
+    ).catch((error: unknown) => {
+      if (error instanceof QueryTimeoutError) throw new LockTimeoutError(operation, acquireTimeoutMs);
+      throw error;
+    });
 
     const verify = async (): Promise<void> => {
       if (lostReason) return;
       try {
-        const state = await client.$queryRaw<Array<{ pid: number; held: boolean }>>`
-          SELECT pg_backend_pid() AS pid,
-                 EXISTS (
-                   SELECT 1 FROM pg_locks
-                   WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND pid = pg_backend_pid()
-                     AND classid::bigint = ${key.classId}::bigint AND objid::bigint = ${key.objectId}::bigint
-                 ) AS held
-        `;
+        const state = await withTimeout(
+          client.$queryRaw<Array<{ pid: number; held: boolean }>>`
+            SELECT pg_backend_pid() AS pid,
+                   EXISTS (
+                     SELECT 1 FROM pg_locks
+                     WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND pid = pg_backend_pid()
+                       AND classid::bigint = ${key.classId}::bigint AND objid::bigint = ${key.objectId}::bigint
+                   ) AS held
+          `,
+          heartbeatTimeoutMs
+        );
         if (state[0]?.pid !== backendPid) lostReason = "the database session was replaced";
         else if (!state[0]?.held) lostReason = "the session no longer holds the lock";
-      } catch {
-        lostReason = "the lock connection failed";
+      } catch (error) {
+        lostReason =
+          error instanceof QueryTimeoutError
+            ? `the lock connection did not answer within ${seconds(heartbeatTimeoutMs)}`
+            : "the lock connection failed";
       }
       if (lostReason && onLost === "fail-stop") {
         // Without the lock every further write is unprotected. Ending the
@@ -294,10 +364,14 @@ export async function withExclusiveLock<T>(
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     if (acquired && !lostReason) {
-      await client.$queryRaw`SELECT pg_advisory_unlock(${key.classId}::int, ${key.objectId}::int)`.catch(() => undefined);
+      await withTimeout(
+        client.$queryRaw`SELECT pg_advisory_unlock(${key.classId}::int, ${key.objectId}::int)`,
+        RELEASE_TIMEOUT_MS
+      ).catch(() => undefined);
     }
-    // Closing the session releases the lock even if the explicit unlock failed.
-    await client.$disconnect().catch(() => undefined);
+    // Closing the session releases the lock even if the explicit unlock
+    // failed. Bounded as well: a frozen connection must not hold the caller.
+    await withTimeout(client.$disconnect(), RELEASE_TIMEOUT_MS).catch(() => undefined);
   }
 }
 
@@ -319,7 +393,8 @@ export function reportLockError(error: unknown): boolean {
   if (
     error instanceof LockLostError ||
     error instanceof PooledConnectionError ||
-    error instanceof LockTargetMismatchError
+    error instanceof LockTargetMismatchError ||
+    error instanceof LockTimeoutError
   ) {
     console.error(error.message);
     process.exitCode = 1;

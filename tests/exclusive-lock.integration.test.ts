@@ -13,10 +13,12 @@ import {
   LockBusyError,
   LockLostError,
   LockTargetMismatchError,
+  LockTimeoutError,
   PooledConnectionError,
   withExclusiveLock,
   type LockKey
 } from "../src/lib/db/exclusive-lock";
+import { startFreezableProxy } from "./helpers/freezable-proxy";
 import { createTempDatabase } from "./helpers/temp-database";
 
 // Real concurrency against PostgreSQL, including independent operating
@@ -328,6 +330,126 @@ test(
       assert.deepEqual([...codes].sort(), [0, 75, 75, 75, 75, 75]);
     } finally {
       for (const contender of contenders) contender.child.kill("SIGKILL");
+    }
+  }
+);
+
+// --- connections that stop answering without being closed -------------------
+
+function databaseAddress(): { host: string; port: number } {
+  const url = new URL(process.env.DATABASE_URL!);
+  return { host: url.hostname, port: Number(url.port || 5432) };
+}
+
+function throughProxy(port: number): string {
+  const url = new URL(process.env.DATABASE_URL!);
+  url.hostname = "127.0.0.1";
+  url.port = String(port);
+  return url.toString();
+}
+
+/** Fails with a clear message instead of letting a hung promise stall the whole suite. */
+async function within<T>(timeoutMs: number, what: string, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`still waiting after ${timeoutMs} ms: ${what}`)), timeoutMs);
+  });
+  work.catch(() => undefined);
+  try {
+    return await Promise.race([work, guard]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test(
+  "integration: a lock connection that stops answering is treated as lost within the heartbeat time limit",
+  { skip, timeout: 90_000 },
+  async () => {
+    const proxy = await startFreezableProxy(databaseAddress());
+    const key = uniqueKey();
+    try {
+      const outcome = withExclusiveLock(
+        { operation: "pipeline", key, connectionUrl: throughProxy(proxy.port), heartbeatMs: 600_000, heartbeatTimeoutMs: 1_000 },
+        async (lock) => {
+          await lock.assertHeld();
+
+          // The connection stays open but nothing comes back any more.
+          proxy.freeze();
+          const frozenAt = Date.now();
+          await within(
+            8_000,
+            "the lock check on a frozen connection",
+            assert.rejects(
+              () => lock.assertHeld(),
+              (error: unknown) => error instanceof LockLostError && /did not answer within 1 s/.test(error.message)
+            )
+          );
+          const waitedMs = Date.now() - frozenAt;
+          assert.ok(waitedMs >= 900 && waitedMs < 4_000, `detected after ${waitedMs} ms, expected about 1000`);
+        }
+      );
+      await within(20_000, "the operation to end without waiting on the frozen connection", assert.rejects(() => outcome, LockLostError));
+    } finally {
+      await proxy.close();
+    }
+    await eventually(async () => (await tryAcquire(key)) === "acquired", 15_000, "release once the frozen connection is closed");
+  }
+);
+
+test(
+  "integration: the heartbeat alone notices a connection that stops answering",
+  { skip, timeout: 90_000 },
+  async () => {
+    const proxy = await startFreezableProxy(databaseAddress());
+    const key = uniqueKey();
+    try {
+      const outcome = withExclusiveLock(
+        { operation: "pipeline", key, connectionUrl: throughProxy(proxy.port), heartbeatMs: 300, heartbeatTimeoutMs: 800 },
+        async (lock) => {
+          await lock.assertHeld();
+          proxy.freeze();
+          // No explicit check: only the background heartbeat is running.
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          const askedAt = Date.now();
+          await within(8_000, "the lock check after the heartbeat ran", assert.rejects(() => lock.assertHeld(), LockLostError));
+          assert.ok(Date.now() - askedAt < 500, "the heartbeat had already recorded the loss");
+        }
+      );
+      await within(20_000, "the operation to end", assert.rejects(() => outcome, LockLostError));
+    } finally {
+      await proxy.close();
+    }
+  }
+);
+
+test(
+  "integration: taking the lock on a database that never answers gives up with a clear error",
+  { skip, timeout: 90_000 },
+  async () => {
+    const proxy = await startFreezableProxy(databaseAddress());
+    proxy.freeze();
+    const startedAt = Date.now();
+    try {
+      await within(
+        20_000,
+        "taking the lock on a silent database",
+        assert.rejects(
+          () => withExclusiveLock(
+            { operation: "pipeline", key: uniqueKey(), connectionUrl: throughProxy(proxy.port), acquireTimeoutMs: 1_500 },
+            async () => {
+              assert.fail("the protected work must not start");
+            }
+          ),
+          (error: unknown) =>
+            error instanceof LockTimeoutError &&
+            /did not answer within 1.5 s while taking the exclusive lock/.test(error.message) &&
+            /Nothing was written/.test(error.message)
+        )
+      );
+      assert.ok(Date.now() - startedAt < 10_000);
+    } finally {
+      await proxy.close();
     }
   }
 );
