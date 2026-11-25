@@ -9,6 +9,14 @@ export type AiExtractionProviderInput = {
   userPrompt: string;
 };
 
+export type AiExtractionProviderOptions = {
+  /**
+   * Cancels the request. A provider must stop waiting and reject with a
+   * "cancelled" AiProviderError as soon as this signal aborts.
+   */
+  signal?: AbortSignal;
+};
+
 /** Raw provider output before Zod validation -- deliberately `unknown`, validation happens one layer up. */
 export type AiExtractionProviderOutput = {
   raw: unknown;
@@ -23,8 +31,20 @@ export interface AiExtractionProvider {
    * src/pipeline/ai-stage.ts.
    */
   readonly model: string;
-  extract(input: AiExtractionProviderInput): Promise<AiExtractionProviderOutput>;
+  extract(input: AiExtractionProviderInput, options?: AiExtractionProviderOptions): Promise<AiExtractionProviderOutput>;
 }
+
+export type AiProviderErrorKind =
+  /** The request never produced a response: DNS, connection reset, TLS. */
+  | "network"
+  /** No complete response within the provider's time limit. */
+  | "timeout"
+  /** The caller aborted the request; nothing is wrong with the provider. */
+  | "cancelled"
+  /** The provider answered with an error status. */
+  | "http"
+  /** The provider answered 2xx with a body that cannot be used. */
+  | "invalid_response";
 
 /**
  * Distinguishes retryable transport/rate-limit failures from permanent
@@ -33,10 +53,27 @@ export interface AiExtractionProvider {
  */
 export class AiProviderError extends Error {
   readonly retryable: boolean;
+  readonly kind: AiProviderErrorKind;
+  /** HTTP status, when the provider answered. */
+  readonly status: number | null;
+  /** How long the provider asked the caller to wait before trying again, when it said so. */
+  readonly retryAfterMs: number | null;
 
-  constructor(message: string, options: { retryable: boolean; cause?: unknown }) {
+  constructor(
+    message: string,
+    options: {
+      retryable: boolean;
+      kind?: AiProviderErrorKind;
+      status?: number;
+      retryAfterMs?: number | null;
+      cause?: unknown;
+    }
+  ) {
     super(message, { cause: options.cause });
     this.name = "AiProviderError";
     this.retryable = options.retryable;
+    this.kind = options.kind ?? "network";
+    this.status = options.status ?? null;
+    this.retryAfterMs = options.retryAfterMs ?? null;
   }
 }

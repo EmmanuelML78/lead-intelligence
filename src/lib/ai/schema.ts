@@ -33,14 +33,38 @@ export const evidenceSchema = z.object(
 export type Evidence = Partial<Record<(typeof evidenceFieldNames)[number], string[]>>;
 
 /**
+ * Monetary amounts in this contract.
+ *
+ * Unit: whole Colombian pesos (COP). The peso has no fractional unit in
+ * practice, and the columns that store these values (`AiExtraction.budget`,
+ * `AiExtraction.downPayment`) are PostgreSQL INTEGER, so the largest amount
+ * that can be stored is 2,147,483,647 COP.
+ *
+ * The contract accepts exactly what the database can hold, so a value either
+ * is stored as given or is rejected here with a reason. Nothing is rounded,
+ * truncated or clamped: a fractional or oversized amount is more likely a
+ * misread conversation than a real figure, and a silently adjusted number
+ * would look as trustworthy as a correct one.
+ */
+export const MAX_COP_AMOUNT = 2_147_483_647;
+
+const copAmountSchema = z
+  .number({ error: "must be a number of Colombian pesos, not text" })
+  .int({ error: "must be a whole number of Colombian pesos (no decimals)" })
+  .nonnegative({ error: "must not be negative" })
+  .max(MAX_COP_AMOUNT, { error: `must not exceed ${MAX_COP_AMOUNT} COP, the largest amount that can be stored` })
+  // JSON allows "-0"; it is zero, and is stored and compared as zero.
+  .transform((value) => (value === 0 ? 0 : value));
+
+/**
  * The AI extraction contract (assessment.mdc "AI Rules" + Milestone 3
  * spec). The model must never invent a value that isn't supported by the
  * conversation -- absence is represented with null/UNKNOWN, not guessed.
  */
 export const aiExtractionResultSchema = z.object({
   motorcycleInterest: z.string().trim().min(1).nullable(),
-  budget: z.number().finite().nonnegative().nullable(),
-  downPayment: z.number().finite().nonnegative().nullable(),
+  budget: copAmountSchema.nullable(),
+  downPayment: copAmountSchema.nullable(),
   paymentMethod: z.enum(["CASH", "CREDIT", "UNKNOWN"]),
   purchaseIntent: z.enum(["HIGH", "MEDIUM", "LOW", "UNKNOWN"]),
   mainObjection: z.enum([
@@ -78,8 +102,9 @@ export const aiExtractionJsonSchema = {
   type: "object",
   properties: {
     motorcycleInterest: { type: "string", nullable: true },
-    budget: { type: "number", nullable: true },
-    downPayment: { type: "number", nullable: true },
+    // Whole Colombian pesos: see MAX_COP_AMOUNT above.
+    budget: { type: "integer", nullable: true },
+    downPayment: { type: "integer", nullable: true },
     paymentMethod: { type: "string", enum: ["CASH", "CREDIT", "UNKNOWN"] },
     purchaseIntent: { type: "string", enum: ["HIGH", "MEDIUM", "LOW", "UNKNOWN"] },
     mainObjection: {
