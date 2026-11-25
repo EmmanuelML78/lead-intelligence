@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../lib/db/client";
-import { reportLockError, withExclusiveLock, type ExclusiveLock } from "../lib/db/exclusive-lock";
+import { reportLockError, withWriterLock, type ExclusiveLock } from "../lib/db/exclusive-lock";
 import { parseMixedDate } from "../lib/normalization/date";
 import { runAiExtractionStage, type AiStageReport, type EligibleConversation } from "./ai-stage";
 import { runAssignmentStage, type AssignmentStageReport } from "./assignment-stage";
@@ -38,7 +38,7 @@ async function readSources() {
 // The whole run holds the exclusive lock, so no other pipeline run and no
 // standalone command that writes scores or assignments can overlap with it.
 async function main() {
-  await withExclusiveLock({ operation: "pipeline" }, runPipeline);
+  await withWriterLock("pipeline", runPipeline);
 }
 
 async function runPipeline(lock: ExclusiveLock) {
@@ -238,8 +238,9 @@ async function runPipeline(lock: ExclusiveLock) {
     printSummary(counters, pipelineRun.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await persistIssues(prisma, pipelineRun.id, issues);
-    await finalizePipelineRun(prisma, pipelineRun.id, "FAILED", counters, message);
+    // Recording the failure must never replace the error that caused it.
+    await persistIssues(prisma, pipelineRun.id, issues).catch(() => undefined);
+    await finalizePipelineRun(prisma, pipelineRun.id, "FAILED", counters, message).catch(() => undefined);
     throw error;
   }
 }

@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { prisma as sharedClient } from "./client";
 
 /**
  * Mutual exclusion for operations that write scores or assignments.
@@ -18,12 +19,17 @@ import { PrismaClient } from "@prisma/client";
  *   Neon's `-pooler` endpoint), where consecutive statements may run on
  *   different server sessions. The lock therefore requires a direct
  *   connection and refuses a pooled one.
+ * - The lock connection (DIRECT_URL) and the connection the work writes
+ *   with (DATABASE_URL) are configured separately, so after taking the lock
+ *   the writing client must be able to see it. If it cannot, they are not
+ *   the same database and the operation is refused.
  * - If that one connection is ever replaced (network drop, server restart),
- *   the lock is gone. A heartbeat detects it and the operation fails instead
- *   of carrying on unprotected.
+ *   the lock is gone and another writer can take it. A heartbeat detects it
+ *   within one interval. Commands run with `onLost: "fail-stop"`, which ends
+ *   the process at once rather than letting it write unprotected.
  *
  * The stages themselves take no lock, so they stay usable as a library and
- * in tests. Each command that writes wraps its work in `withExclusiveLock`.
+ * in tests. Each command that writes wraps its work in `withWriterLock`.
  */
 
 export type LockKey = {
@@ -39,7 +45,9 @@ export const PIPELINE_WRITE_LOCK: LockKey = { classId: 0x4c494855, objectId: 1 }
 /** Exit code for "another operation is running" (EX_TEMPFAIL): retry later. */
 export const LOCK_BUSY_EXIT_CODE = 75;
 
-const DEFAULT_HEARTBEAT_MS = 15_000;
+/** How often the lock session is verified; also the longest a lost lock can go unnoticed. */
+export const DEFAULT_HEARTBEAT_MS = 5_000;
+
 const APPLICATION_NAME_PREFIX = "lead-intelligence:";
 
 export type LockHolder = {
@@ -85,6 +93,17 @@ export class PooledConnectionError extends Error {
   }
 }
 
+export class LockTargetMismatchError extends Error {
+  constructor(operation: string) {
+    super(
+      `Cannot start "${operation}": the exclusive lock was taken on a different database than the one this command writes to. ` +
+        "DIRECT_URL and DATABASE_URL must point at the same database. Unset DIRECT_URL, or set it to the direct " +
+        "connection string of the database in DATABASE_URL."
+    );
+    this.name = "LockTargetMismatchError";
+  }
+}
+
 export type ExclusiveLock = {
   operation: string;
   backendPid: number;
@@ -99,6 +118,18 @@ export type ExclusiveLockOptions = {
   /** Defaults to DIRECT_URL, then DATABASE_URL. */
   connectionUrl?: string;
   heartbeatMs?: number;
+  /**
+   * The client the protected work writes with. It must see the lock, which
+   * proves both connections reach the same database. Defaults to the shared
+   * application client; pass null only when nothing is written through Prisma.
+   */
+  protects?: PrismaClient | null;
+  /**
+   * What happens when the heartbeat finds the lock lost.
+   * "report": remember it; `assertHeld` and the end of the operation throw.
+   * "fail-stop": print the reason and end the process immediately.
+   */
+  onLost?: "report" | "fail-stop";
 };
 
 /** Recognizes the usual markers of a transaction-mode pooler in a connection URL. */
@@ -162,6 +193,19 @@ async function findHolder(client: PrismaClient, key: LockKey): Promise<LockHolde
   }
 }
 
+/** True when `client`, in its own current database, sees the lock held by the given session. */
+async function seesLock(client: PrismaClient, key: LockKey, backendPid: number): Promise<boolean> {
+  const rows = await client.$queryRaw<Array<{ visible: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1 FROM pg_locks
+      WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND pid = ${backendPid}::int
+        AND classid::bigint = ${key.classId}::bigint AND objid::bigint = ${key.objectId}::bigint
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    ) AS visible
+  `;
+  return rows[0]?.visible === true;
+}
+
 /**
  * Runs `work` while holding the exclusive lock.
  *
@@ -175,11 +219,14 @@ export async function withExclusiveLock<T>(
 ): Promise<T> {
   const key = options.key ?? PIPELINE_WRITE_LOCK;
   const operation = options.operation;
+  const onLost = options.onLost ?? "report";
+  const protectedClient = options.protects === undefined ? sharedClient : options.protects;
   const client = new PrismaClient({
     datasourceUrl: buildLockConnectionUrl(resolveConnectionUrl(options.connectionUrl), operation)
   });
 
   let lostReason: string | null = null;
+  let checking: Promise<void> | null = null;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let acquired = false;
 
@@ -193,7 +240,11 @@ export async function withExclusiveLock<T>(
     }
     acquired = true;
 
-    const check = async (): Promise<void> => {
+    if (protectedClient && !(await seesLock(protectedClient, key, backendPid))) {
+      throw new LockTargetMismatchError(operation);
+    }
+
+    const verify = async (): Promise<void> => {
       if (lostReason) return;
       try {
         const state = await client.$queryRaw<Array<{ pid: number; held: boolean }>>`
@@ -209,6 +260,19 @@ export async function withExclusiveLock<T>(
       } catch {
         lostReason = "the lock connection failed";
       }
+      if (lostReason && onLost === "fail-stop") {
+        // Without the lock every further write is unprotected. Ending the
+        // process is the only way to stop work that is already in progress.
+        console.error(new LockLostError(operation, lostReason).message);
+        process.exit(1);
+      }
+    };
+    // One verification at a time, shared by the heartbeat and assertHeld.
+    const check = (): Promise<void> => {
+      checking ??= verify().finally(() => {
+        checking = null;
+      });
+      return checking;
     };
 
     heartbeat = setInterval(() => void check(), options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS);
@@ -237,6 +301,14 @@ export async function withExclusiveLock<T>(
   }
 }
 
+/**
+ * The lock every writing command takes: the shared pipeline lock, verified
+ * against the shared application client, ending the process if it is lost.
+ */
+export function withWriterLock<T>(operation: string, work: (lock: ExclusiveLock) => Promise<T>): Promise<T> {
+  return withExclusiveLock({ operation, onLost: "fail-stop" }, work);
+}
+
 /** Reports a lock error on the console and sets the exit code; returns false for any other error. */
 export function reportLockError(error: unknown): boolean {
   if (error instanceof LockBusyError) {
@@ -244,7 +316,11 @@ export function reportLockError(error: unknown): boolean {
     process.exitCode = LOCK_BUSY_EXIT_CODE;
     return true;
   }
-  if (error instanceof LockLostError || error instanceof PooledConnectionError) {
+  if (
+    error instanceof LockLostError ||
+    error instanceof PooledConnectionError ||
+    error instanceof LockTargetMismatchError
+  ) {
     console.error(error.message);
     process.exitCode = 1;
     return true;

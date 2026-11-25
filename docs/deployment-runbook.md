@@ -248,7 +248,7 @@ Approval for one step is not approval for the next. A step that was skipped is r
 - Announce that nobody runs the pipeline or merges until the deployment is finished.
 - In a production window: `Step { bun run ops:db-status --expect-host $ExpectHost }`. `Pipeline runs currently RUNNING` must be 0. A `RUNNING` row that never finishes is a crashed run: stop and decide what it is before continuing.
 
-Writers exclude each other technically: `bun run pipeline`, `ops:rescore --apply`, `analysis:priority` and `analysis:assignment` take the same exclusive lock, and a second one exits with code 75 naming the operation that is running. The lock needs a direct connection, which this runbook already uses. The freeze is still required: the lock does not cover `prisma migrate deploy` or a merge.
+Writers exclude each other technically: `bun run pipeline`, `ops:rescore --apply`, `analysis:priority` and `analysis:assignment` take the same exclusive lock, and a second one exits with code 75 naming the operation that is running. The lock needs a direct connection, which this runbook already uses. If `DIRECT_URL` is set in your environment it must name the same database as the window's `DATABASE_URL`; the command checks this and refuses otherwise, so remove a leftover value with `Remove-Item Env:DIRECT_URL`. The freeze is still required: the lock does not cover `prisma migrate deploy` or a merge.
 
 A `RUNNING` row with no live process is the leftover of an interrupted run. The next pipeline run closes it as `FAILED` by itself.
 

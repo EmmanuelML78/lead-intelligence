@@ -73,8 +73,11 @@ export async function finalizePipelineRun(
   failureReason?: string | null,
   metadata?: Record<string, unknown> | null
 ) {
-  return db.pipelineRun.update({
-    where: { id },
+  // Only a run that is still RUNNING can be finalized. If another process
+  // already closed it as interrupted, two runs overlapped: saying so is
+  // better than silently turning that row into a success.
+  const result = await db.pipelineRun.updateMany({
+    where: { id, status: "RUNNING" },
     data: {
       status,
       finishedAt: new Date(),
@@ -83,4 +86,15 @@ export async function finalizePipelineRun(
       ...counters
     }
   });
+  if (result.count === 0) throw new PipelineRunAlreadyClosedError(id);
+}
+
+export class PipelineRunAlreadyClosedError extends Error {
+  constructor(id: string) {
+    super(
+      `Pipeline run ${id} was already closed by another process before it could be finalized. ` +
+        "Two runs overlapped; check the data and run the pipeline again."
+    );
+    this.name = "PipelineRunAlreadyClosedError";
+  }
 }

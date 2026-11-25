@@ -30,12 +30,29 @@ export type HealthCheckerOptions = {
   compatibleTtlMs?: number;
   /** How long an "incompatible" answer is reused. Short, so a fix shows up quickly. */
   incompatibleTtlMs?: number;
+  /** A database that has not answered within this time is reported as unreachable. */
+  pingTimeoutMs?: number;
+  inspectTimeoutMs?: number;
   now?: () => number;
   log?: (message: string) => void;
 };
 
 const DEFAULT_COMPATIBLE_TTL_MS = 30_000;
 const DEFAULT_INCOMPATIBLE_TTL_MS = 5_000;
+const DEFAULT_PING_TIMEOUT_MS = 3_000;
+const DEFAULT_INSPECT_TIMEOUT_MS = 5_000;
+
+class ProbeTimeoutError extends Error {}
+
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ProbeTimeoutError()), timeoutMs);
+  });
+  // The slow query is left to finish or fail on its own; its result is ignored.
+  work.catch(() => undefined);
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 const OK: HealthResult = { httpStatus: 200, body: { status: "ok", database: "reachable", schema: "compatible" } };
 const INCOMPATIBLE: HealthResult = {
@@ -50,7 +67,8 @@ const UNREACHABLE: HealthResult = {
 /**
  * Builds the health check.
  *
- * Reachability is checked on every call with one trivial query. The schema
+ * Reachability is checked on every call with one trivial query, bounded by
+ * a timeout so a database that hangs is reported instead of awaited. The schema
  * inspection, which is several catalog queries, is cached: a deployed
  * schema does not change between requests, only across deployments and
  * migrations. The check never writes.
@@ -58,6 +76,8 @@ const UNREACHABLE: HealthResult = {
 export function createHealthChecker(probes: HealthProbes, options: HealthCheckerOptions = {}) {
   const compatibleTtlMs = options.compatibleTtlMs ?? DEFAULT_COMPATIBLE_TTL_MS;
   const incompatibleTtlMs = options.incompatibleTtlMs ?? DEFAULT_INCOMPATIBLE_TTL_MS;
+  const pingTimeoutMs = options.pingTimeoutMs ?? DEFAULT_PING_TIMEOUT_MS;
+  const inspectTimeoutMs = options.inspectTimeoutMs ?? DEFAULT_INSPECT_TIMEOUT_MS;
   const now = options.now ?? Date.now;
   const log = options.log ?? ((message: string) => console.error(message));
 
@@ -66,7 +86,7 @@ export function createHealthChecker(probes: HealthProbes, options: HealthChecker
 
   return async function check(): Promise<HealthResult> {
     try {
-      await probes.ping();
+      await withTimeout(probes.ping(), pingTimeoutMs);
     } catch {
       // Do not trust an earlier schema answer once the database is back.
       cached = null;
@@ -79,8 +99,10 @@ export function createHealthChecker(probes: HealthProbes, options: HealthChecker
 
     let inspection: SchemaInspection;
     try {
-      inspection = await probes.inspectSchema();
-    } catch {
+      inspection = await withTimeout(probes.inspectSchema(), inspectTimeoutMs);
+    } catch (error) {
+      // Not answering is a reachability problem, and says nothing about the schema.
+      if (error instanceof ProbeTimeoutError) return UNREACHABLE;
       inspection = { compatible: false, problems: ["the schema could not be inspected"] };
     }
 

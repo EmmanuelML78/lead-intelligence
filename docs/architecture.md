@@ -432,7 +432,9 @@ Two independent, read-only checks decide `schema`:
 
 Both ignore whatever the database has beyond that, so a database that is **ahead** of the code (an additive migration applied before its code is deployed, which is the order the runbook requires) is healthy. The check is stricter than "the pages render": a pending migration the code could survive without, such as dropping a default, still answers 503 until it is applied.
 
-Cost: reachability is one `SELECT 1` per request. The schema inspection is four catalog queries, cached per server instance for 30 seconds when compatible and 5 seconds when not, so applying a pending migration is reflected within seconds and without a redeploy. The endpoint never runs a migration and never writes; a test runs it on a read-only session.
+Cost: reachability is one `SELECT 1` per request, bounded by a 3-second timeout so a database that accepts the connection but does not answer is reported as unreachable instead of leaving the request hanging. The schema inspection is four catalog queries, cached per server instance for 30 seconds when compatible and 5 seconds when not, so applying a pending migration is reflected within seconds and without a redeploy. The endpoint never runs a migration and never writes; a test runs it on a read-only session.
+
+What it does not do: it compares names, not column types, nullability, defaults or constraints. Because of the cache, an object removed from a running database can keep answering 200 for up to 30 seconds. A transient failure of the inspection itself answers 503 for up to 5 seconds on a healthy database.
 
 This is what was missing on 2026-11-24: the previous endpoint checked reachability only and answered 200 while every score-reading page failed. A regression test builds that exact database (all migrations but the last) and requires 503 through the real route handler.
 
@@ -477,17 +479,22 @@ Alternatives considered:
 
 ### Prisma and connection pooling
 
-- Prisma multiplexes queries over a pool and does not pin a connection outside a transaction, so a session lock taken through the shared client could be taken on one connection and released on another. The lock therefore uses its **own client limited to one connection** (`connection_limit=1`), with idle recycling disabled (`max_idle_connection_lifetime=0`).
-- A session lock is meaningless through a **transaction-mode pooler** (PgBouncer, Neon's `-pooler` endpoint): consecutive statements may reach different server sessions. The lock recognizes a pooled URL and refuses it with instructions. It connects with `DIRECT_URL` when set, otherwise `DATABASE_URL`. The dashboard on Vercel is unaffected: it takes no lock and can keep using the pooled URL.
-- If the lock's single connection is ever replaced (network drop, server restart, compute suspended), the lock is gone without the process noticing. A heartbeat every 15 seconds, and an explicit check before the scoring, assignment and finalize stages, compare the session's backend id and its entry in `pg_locks`. On a mismatch the command stops with `LockLostError` instead of continuing unprotected, and the pipeline records the run as `FAILED`.
+- Prisma multiplexes queries over a pool and does not pin a connection outside a transaction, so a session lock taken through the shared client could be taken on one connection and released on another. The lock therefore uses its **own client limited to one connection** (`connection_limit=1`), with idle recycling disabled (`max_idle_connection_lifetime=0`). That parameter matters: measured against PostgreSQL, with it the session kept the same backend for 330 idle seconds, and without it Prisma silently replaced the connection, and with it the lock.
+- A session lock is meaningless through a **transaction-mode pooler** (PgBouncer, Neon's `-pooler` endpoint): consecutive statements may reach different server sessions. The lock recognizes a pooled URL (`-pooler` host, `pgbouncer=true`, port 6543) and refuses it with instructions; a transaction-mode pooler with none of those markers cannot be recognized. It connects with `DIRECT_URL` when set, otherwise `DATABASE_URL`. The dashboard on Vercel is unaffected: it takes no lock and can keep using the pooled URL.
+- Because the lock and the writes can use two different URLs, **the lock is verified against the writing connection**: right after acquiring it, the client the command writes with must see that lock, held by that session, in its own current database. If it does not, `DIRECT_URL` and `DATABASE_URL` name different databases and the command is refused before it writes anything. Without this check a stale `DIRECT_URL` would lock one database while writing to another.
+- If the lock's single connection is ever replaced (network drop, server restart, compute suspended), the lock is gone and another writer can take it. A heartbeat every 5 seconds compares the session's backend id and its entry in `pg_locks`. Commands run in fail-stop mode: when the heartbeat finds the lock lost, the process **ends immediately**, because that is the only way to stop work already in progress. The run is left in `RUNNING` and is closed by the next one, exactly like a crash. The pipeline also checks explicitly before the scoring, assignment and finalize stages.
+- This bounds the exposure; it does not remove it. Between the moment the session is lost and the next heartbeat (at most 5 seconds) the first writer is still running and a second one can start. Closing that window completely would need a fencing check inside every write, which the stages do not have.
 
 ### After a crash
 
-A killed pipeline leaves its `PipelineRun` row in `RUNNING`. The next pipeline run, once it holds the lock, knows no other run can be alive, marks those rows `FAILED` with the reason `Interrupted: the process ended before the run was finalized.`, and proceeds. Nothing has to be cleaned by hand.
+A killed pipeline leaves its `PipelineRun` row in `RUNNING`. The next pipeline run, once it holds the lock, marks those rows `FAILED` with the reason `Interrupted: the process ended before the run was finalized.`, and proceeds. Nothing has to be cleaned by hand.
+
+The assumption that a `RUNNING` row is a leftover holds only while every writer takes the lock. It can be wrong for a run started from a checkout that predates the lock, or inside the lost-lock window above. For that case a run can only be finalized while it is still `RUNNING`: a process that finds its row already closed fails with an explicit "two runs overlapped" error instead of turning it into a success.
 
 ### Limits
 
 - A machine that loses power or network without closing its connection keeps the lock until the server notices the dead connection (TCP keepalive or the provider's proxy timeout). The refused command prints the holder's database session id; `SELECT pg_terminate_backend(<id>)` frees it at once.
+- A lost lock is noticed within one heartbeat, not instantly; see above.
 - The lock is per database. It does not coordinate with `prisma migrate deploy`, which uses Prisma's own advisory lock; the deployment runbook's freeze still applies to migrations.
 - The lock orders writers; it does not make a stage transactional. A run killed half way leaves the rows it had already written, which the next idempotent run completes.
 

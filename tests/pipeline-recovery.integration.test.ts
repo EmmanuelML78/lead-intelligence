@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
-import { failInterruptedRuns, INTERRUPTED_RUN_REASON } from "../src/pipeline/persist/pipeline-run";
+import {
+  emptyCounters,
+  failInterruptedRuns,
+  finalizePipelineRun,
+  INTERRUPTED_RUN_REASON,
+  PipelineRunAlreadyClosedError
+} from "../src/pipeline/persist/pipeline-run";
 import { createTempDatabase, deployMigrations } from "./helpers/temp-database";
 
 // Uses its own database: closing interrupted runs acts on every RUNNING row,
@@ -36,6 +42,23 @@ test(
       assert.deepEqual(await db.pipelineRun.findUniqueOrThrow({ where: { id: failed.id } }), failed);
 
       assert.equal(await failInterruptedRuns(db), 0, "running it again changes nothing");
+
+      // If the "interrupted" process was in fact still alive (two runs
+      // overlapped), it must not be able to turn that row into a success.
+      await assert.rejects(
+        () => finalizePipelineRun(db, interrupted.id, "SUCCESS", { ...emptyCounters }),
+        PipelineRunAlreadyClosedError
+      );
+      const stillFailed = await db.pipelineRun.findUniqueOrThrow({ where: { id: interrupted.id } });
+      assert.equal(stillFailed.status, "FAILED");
+      assert.equal(stillFailed.failureReason, INTERRUPTED_RUN_REASON);
+
+      // A run that is still RUNNING is finalized normally.
+      const live = await db.pipelineRun.create({ data: { status: "RUNNING" } });
+      await finalizePipelineRun(db, live.id, "SUCCESS", { ...emptyCounters, leadsReceived: 3 });
+      const finalized = await db.pipelineRun.findUniqueOrThrow({ where: { id: live.id } });
+      assert.equal(finalized.status, "SUCCESS");
+      assert.equal(finalized.leadsReceived, 3);
     } finally {
       await db.$disconnect();
       await database.drop();

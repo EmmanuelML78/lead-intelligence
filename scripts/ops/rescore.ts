@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { prisma } from "../../src/lib/db/client";
-import { reportLockError, withExclusiveLock } from "../../src/lib/db/exclusive-lock";
+import { reportLockError, withWriterLock } from "../../src/lib/db/exclusive-lock";
 import { runScoringStage } from "../../src/pipeline/scoring-stage";
 import { assertTarget, formatTarget, parseArgs, stringFlag, TargetError } from "./target";
 
@@ -84,7 +84,7 @@ async function main() {
   // Scoring writes LeadScore and LeadCurrentScore, so it must not overlap
   // with the pipeline or with another recalculation.
   const startedAt = new Date();
-  const { report, scores, issues } = await withExclusiveLock({ operation: "ops-rescore" }, async (lock) => {
+  const { report, scores, issues } = await withWriterLock("ops-rescore", async (lock) => {
     console.log(`Exclusive lock acquired (database session ${lock.backendPid}).`);
     return runScoringStage(prisma, { decisionAt });
   });

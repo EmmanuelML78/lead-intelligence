@@ -18,7 +18,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../src/lib/db/client";
-import { reportLockError, withExclusiveLock } from "../src/lib/db/exclusive-lock";
+import { reportLockError, withWriterLock } from "../src/lib/db/exclusive-lock";
 import { createAiProviderFromEnv, runAiExtractionStage, type EligibleConversation } from "../src/pipeline/ai-stage";
 import { readCsv, readJson } from "../src/pipeline/io";
 import { buildLeadRecord } from "../src/pipeline/persist/build-lead-record";
@@ -245,7 +245,7 @@ async function main() {
 
 // This check ingests leads and conversations and persists AI extractions,
 // the same data the pipeline writes, so it takes the same exclusive lock.
-withExclusiveLock({ operation: "ai-live-check" }, main)
+withWriterLock("ai-live-check", main)
   .catch((error) => {
     if (reportLockError(error)) return;
     console.error("Live check FAILED:", error instanceof Error ? error.message : error);

@@ -71,7 +71,7 @@ The `pipeline` command is idempotent. Pipeline/data loading is an explicit setup
 | Variable | Pipeline | Dashboard runtime | Notes |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | required | required | Server-only. Pooled URL is fine on Vercel; use a **direct** URL for `db:migrate:deploy`. |
-| `DIRECT_URL` | optional | not used | Direct (non-pooled) connection for the pipeline's exclusive lock. Needed only when `DATABASE_URL` is pooled; the lock refuses a pooled connection. |
+| `DIRECT_URL` | optional | not used | Direct (non-pooled) connection for the pipeline's exclusive lock. Needed only when `DATABASE_URL` is pooled; the lock refuses a pooled connection. Must be the **same database** as `DATABASE_URL`: the command checks and refuses otherwise. |
 | `ASSIGNMENT_BUSINESS_DATE` | required for a stable demo | required for a stable demo | Pin `2026-09-14`. |
 | `BUSINESS_TIMEZONE` | optional | optional | Default `America/Bogota`. |
 | `AI_API_KEY` | optional | **not used** | Empty → AI stage `SKIPPED`; ingestion still succeeds. Do **not** put this on Vercel. |

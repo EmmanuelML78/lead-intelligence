@@ -4,6 +4,7 @@ import { randomInt } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { PrismaClient } from "@prisma/client";
 import { prisma } from "../src/lib/db/client";
 import {
   buildLockConnectionUrl,
@@ -11,10 +12,12 @@ import {
   LOCK_BUSY_EXIT_CODE,
   LockBusyError,
   LockLostError,
+  LockTargetMismatchError,
   PooledConnectionError,
   withExclusiveLock,
   type LockKey
 } from "../src/lib/db/exclusive-lock";
+import { createTempDatabase } from "./helpers/temp-database";
 
 // Real concurrency against PostgreSQL, including independent operating
 // system processes. Skipped when DATABASE_URL is not configured.
@@ -42,7 +45,7 @@ type Holder = {
 function startHolder(
   key: LockKey,
   operation: string,
-  mode: "hold" | "throw" | "hang" | "until-told",
+  mode: "hold" | "throw" | "hang" | "hang-fail-stop" | "until-told",
   holdMs = 1_000
 ): Holder {
   const child = spawn(
@@ -185,6 +188,68 @@ test(
 );
 
 test(
+  "integration: a lock taken on a different database than the one being written is refused",
+  { skip, timeout: 120_000 },
+  async () => {
+    // What a stale DIRECT_URL would do: the lock lands on one database while
+    // the command writes to another, protecting nothing.
+    const other = await createTempDatabase("lock_other");
+    const key = uniqueKey();
+    try {
+      await assert.rejects(
+        () => withExclusiveLock({ operation: "pipeline", key, connectionUrl: other.url }, async () => {
+          assert.fail("the protected work must not start");
+        }),
+        (error: unknown) =>
+          error instanceof LockTargetMismatchError &&
+          /DIRECT_URL and DATABASE_URL must point at the same database/.test(error.message) &&
+          !/postgres(ql)?:\/\//.test(error.message)
+      );
+
+      // The refused attempt left nothing held on either database.
+      assert.equal(await tryAcquire(key), "acquired");
+      const otherClient = new PrismaClient({ datasourceUrl: other.url });
+      try {
+        await withExclusiveLock({ operation: "pipeline", key, connectionUrl: other.url, protects: otherClient }, async (lock) => {
+          await lock.assertHeld();
+        });
+      } finally {
+        await otherClient.$disconnect();
+      }
+    } finally {
+      await other.drop();
+    }
+  }
+);
+
+test(
+  "integration: a writer that loses its lock stops at once instead of finishing its work unprotected",
+  { skip, timeout: 60_000 },
+  async () => {
+    const key = uniqueKey();
+    const holder = startHolder(key, "pipeline", "hang-fail-stop");
+    try {
+      const acquired = await holder.firstLine;
+      assert.match(acquired, /^ACQUIRED \d+/, holder.output());
+      const backendPid = Number(acquired.split(" ")[1]);
+
+      // The session disappears underneath the process (network drop, server restart).
+      await prisma.$queryRaw`SELECT pg_terminate_backend(${backendPid}::int)`;
+
+      const code = await Promise.race([
+        holder.exited,
+        new Promise<"still-running">((resolve) => setTimeout(() => resolve("still-running"), 10_000))
+      ]);
+      assert.equal(code, 1, `the process must end by itself shortly after losing the lock: ${holder.output()}`);
+      assert.match(holder.output(), /The exclusive lock for "pipeline" was lost while it was running/);
+      assert.ok(!holder.output().includes("RELEASED"), "the protected work must not run to completion");
+    } finally {
+      holder.child.kill("SIGKILL");
+    }
+  }
+);
+
+test(
   "integration: an independent process holding the lock blocks others, and frees it when it finishes",
   { skip, timeout: 60_000 },
   async () => {
@@ -236,8 +301,7 @@ test(
 
       holder.child.kill("SIGKILL");
       await holder.exited;
-      const waitedMs = await eventually(async () => (await tryAcquire(key)) === "acquired", 15_000, "lock release after kill");
-      assert.ok(waitedMs < 15_000);
+      await eventually(async () => (await tryAcquire(key)) === "acquired", 15_000, "lock release after kill");
     } finally {
       holder.child.kill("SIGKILL");
     }
@@ -249,7 +313,9 @@ test(
   { skip, timeout: 90_000 },
   async () => {
     const key = uniqueKey();
-    const contenders = Array.from({ length: 6 }, (_, index) => startHolder(key, `contender-${index}`, "hold", 4_000));
+    // The winner keeps the lock until every contender has reported, so the
+    // result does not depend on how fast each process starts.
+    const contenders = Array.from({ length: 6 }, (_, index) => startHolder(key, `contender-${index}`, "until-told"));
     try {
       const lines = await Promise.all(contenders.map((contender) => contender.firstLine));
       const acquired = lines.filter((line) => line.startsWith("ACQUIRED"));
@@ -257,6 +323,7 @@ test(
       assert.equal(acquired.length, 1, `expected exactly one winner, got: ${JSON.stringify(lines)}`);
       assert.equal(busy.length, 5, `expected five refusals, got: ${JSON.stringify(lines)}`);
 
+      for (const contender of contenders) contender.child.stdin?.write("finish\n");
       const codes = await Promise.all(contenders.map((contender) => contender.exited));
       assert.deepEqual([...codes].sort(), [0, 75, 75, 75, 75, 75]);
     } finally {

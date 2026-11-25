@@ -95,6 +95,25 @@ test("a failing inspection is reported as incompatible, not as healthy", async (
   assert.ok(!JSON.stringify(result).includes("permission denied"));
 });
 
+test("a database that does not answer is reported as unreachable instead of leaving the request hanging", async () => {
+  const never = new Promise<never>(() => undefined);
+  const hungPing = createHealthChecker(
+    { ping: () => never, inspectSchema: async () => ({ compatible: true, problems: [] }) },
+    { pingTimeoutMs: 50 }
+  );
+  const started = Date.now();
+  const first = await hungPing();
+  assert.deepEqual(first.body, { status: "error", database: "unreachable", schema: "unknown" });
+  assert.equal(first.httpStatus, 503);
+  assert.ok(Date.now() - started < 2_000);
+
+  const hungInspection = createHealthChecker(
+    { ping: async () => undefined, inspectSchema: () => never },
+    { inspectTimeoutMs: 50 }
+  );
+  assert.deepEqual((await hungInspection()).body, { status: "error", database: "unreachable", schema: "unknown" });
+});
+
 test("the schema inspection is cached while reachability is checked on every request", async () => {
   let clock = 1_000_000;
   const { probes, state } = fakeProbes();

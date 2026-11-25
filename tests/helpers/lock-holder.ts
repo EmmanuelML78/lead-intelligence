@@ -8,6 +8,7 @@
  *   mode "until-told" - keep the lock until a line arrives on stdin, then finish normally
  *   mode "throw" - fail inside the protected work
  *   mode "hang"  - keep the lock until the process is killed
+ *   mode "hang-fail-stop" - like "hang", but end the process as soon as the lock is found lost
  *
  * Prints "ACQUIRED <backend pid>" once it holds the lock, or "BUSY <message>".
  */
@@ -17,11 +18,16 @@ const [classId, objectId, operation, mode, holdMs] = process.argv.slice(2);
 
 async function main() {
   await withExclusiveLock(
-    { operation: operation ?? "holder", key: { classId: Number(classId), objectId: Number(objectId) }, heartbeatMs: 500 },
+    {
+      operation: operation ?? "holder",
+      key: { classId: Number(classId), objectId: Number(objectId) },
+      heartbeatMs: 300,
+      onLost: mode === "hang-fail-stop" ? "fail-stop" : "report"
+    },
     async (lock) => {
       console.log(`ACQUIRED ${lock.backendPid}`);
       if (mode === "throw") throw new Error("simulated failure inside the protected work");
-      if (mode === "hang") await new Promise(() => setInterval(() => undefined, 1_000));
+      if (mode === "hang" || mode === "hang-fail-stop") await new Promise(() => setInterval(() => undefined, 1_000));
       if (mode === "until-told") {
         await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
         process.stdin.pause();
