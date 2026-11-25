@@ -16,6 +16,8 @@
     "ops:db-status": "bun run scripts/ops/db-status.ts",
     "ops:fingerprint": "bun run scripts/ops/table-fingerprints.ts",
     "ops:rescore": "bun run scripts/ops/rescore.ts",
+    "ops:release-audit": "bun run scripts/ops/release-audit.ts",
+    "ops:reconcile-rehearsal": "bun run scripts/ops/reconcile-rehearsal.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

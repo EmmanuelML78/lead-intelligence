@@ -21,6 +21,7 @@ import {
 import { persistReferenceData } from "./persist/reference-data";
 import { runScoringStage, type ScoringStageReport } from "./scoring-stage";
 import type { RawAdvisor, RawConversation, RawLead, RawMotorcycle } from "./types";
+import { normalizeSourceMessages } from "./conversation-source";
 import { validateRawLead } from "./validate";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,12 +157,7 @@ async function runPipeline(lock: ExclusiveLock) {
     const transcriptChanges = { conversationsChanged: 0, messagesAdded: 0, messagesRemoved: 0 };
     for (const raw of conversations) {
       const leadId = knownLeadIds.has(raw.lead_id) ? raw.lead_id : null;
-      const messages = raw.mensajes.map((m, index) => ({
-        index,
-        sender: m.emisor?.trim() || "unknown",
-        sentTime: m.hora?.trim() || null,
-        text: m.texto ?? ""
-      }));
+      const messages = normalizeSourceMessages(raw);
       const normalizedConversation: NormalizedConversation = {
         id: raw.conversacion_id,
         sourceLeadId: raw.lead_id,
