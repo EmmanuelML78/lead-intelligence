@@ -344,6 +344,46 @@ async function scoredIntent(fixture: Fixture) {
   return { usedAi: score.explanation.intent.usedAiExtraction, purchaseIntent: score.explanation.intent.purchaseIntent };
 }
 
+test("integration: historical money is preserved but excluded from scoring and detail", { skip, timeout: 60_000 }, async () => {
+  const fixture = await createFixture("HISTORY-MONEY");
+  try {
+    await persist(fixture, [HELLO]);
+    const stored = await storeExtraction(fixture, indexed([HELLO]), "HIGH");
+    await prisma.aiExtraction.update({ where: { id: stored.id }, data: { budget: -1 } });
+    const before = await prisma.aiExtraction.findUniqueOrThrow({ where: { id: stored.id } });
+    assert.equal((await scoredIntent(fixture)).usedAi, false);
+    assert.equal((await getLeadDetail(prisma, fixture.company, fixture.lead))?.aiExtraction, null);
+    assert.deepEqual(await prisma.aiExtraction.findUniqueOrThrow({ where: { id: stored.id } }), before);
+  } finally { await removeFixture(fixture); }
+});
+
+test("integration: two conversations show the selected extraction's transcript and locally checked evidence", { skip, timeout: 60_000 }, async () => {
+  const fixture = await createFixture("HISTORY-PAIR");
+  const second = { ...fixture, conversation: `${fixture.conversation}-second` };
+  try {
+    await persist(fixture, [HELLO]);
+    await persist(second, [CASH]);
+    // Equal timestamps exercise the deterministic ID tie-breaker for fallback.
+    await prisma.conversation.updateMany({ where: { leadId: fixture.lead }, data: { startedAt: new Date("2026-09-01T00:00:00Z") } });
+    const stored = await storeExtraction(second, indexed([CASH]), "HIGH");
+    await prisma.aiExtraction.update({ where: { id: stored.id }, data: { evidence: { paymentMethod: [CASH.text, "fabricated"] } } });
+    const before = await prisma.aiExtraction.findUniqueOrThrow({ where: { id: stored.id } });
+    const detail = await getLeadDetail(prisma, fixture.company, fixture.lead);
+    assert.equal(detail?.conversation[0]?.text, CASH.text);
+    assert.equal(detail?.aiExtraction?.evidenceStatus, "CHECKED");
+    assert.deepEqual(detail?.aiExtraction?.evidence.paymentMethod, [CASH.text]);
+    assert.equal(detail?.aiExtraction?.droppedEvidenceCount, 1);
+    assert.deepEqual(await prisma.aiExtraction.findUniqueOrThrow({ where: { id: stored.id } }), before);
+    await prisma.conversation.update({ where: { id: second.conversation }, data: { transcriptHash: "not-current" } });
+    const fallback = await getLeadDetail(prisma, fixture.company, fixture.lead);
+    assert.equal(fallback?.aiExtraction, null);
+    assert.equal(fallback?.conversation[0]?.text, HELLO.text);
+  } finally {
+    await prisma.conversation.deleteMany({ where: { id: second.conversation } });
+    await removeFixture(fixture);
+  }
+});
+
 test(
   "integration: scoring and the lead detail use the extraction of the current transcript, not the newest one",
   { skip, timeout: 60_000 },

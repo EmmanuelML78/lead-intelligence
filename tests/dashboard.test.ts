@@ -134,7 +134,7 @@ test("data-quality unique issue counts ignore reobservedRunCount", () => {
 
 test("missing AI extraction stays a neutral empty state", () => {
   assert.equal(presentAiExtraction(null), null);
-  assert.equal(MISSING_AI_EXTRACTION_COPY, "No hay extracción de IA para esta conversación.");
+  assert.match(MISSING_AI_EXTRACTION_COPY, /vigente y compatible/);
   const view = presentAiExtraction({
     motorcycleInterest: "Pulsar",
     budget: 12_000_000,
@@ -147,7 +147,8 @@ test("missing AI extraction stays a neutral empty state", () => {
     evidence: { motorcycleInterest: ["busco pulsar"] }
   });
   assert.equal(view?.motorcycleInterest, "Pulsar");
-  assert.deepEqual(view?.evidence.motorcycleInterest, ["busco pulsar"]);
+  assert.deepEqual(view?.evidence, {});
+  assert.equal(view?.evidenceStatus, "UNVERIFIED");
 });
 
 test("conversation presentation distinguishes CUSTOMER and ADVISOR", () => {

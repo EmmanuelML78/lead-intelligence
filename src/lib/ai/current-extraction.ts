@@ -13,7 +13,19 @@
  * transcript nobody has analysed yet has no current extraction at all, rather
  * than borrowing one made from text that no longer exists.
  */
+import { aiExtractionResultSchema } from "./schema";
+
+const moneySchema = aiExtractionResultSchema.pick({ budget: true, downPayment: true });
+
+/** Historical rows are immutable. Incompatible amounts are excluded, never repaired or re-extracted. */
+export function moneyCompatibilityIssues(row: { budget: unknown; downPayment: unknown }): string[] {
+  const parsed = moneySchema.safeParse(row);
+  return parsed.success ? [] : parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
+}
+
 export type ExtractionCandidate = {
+  budget: number | null;
+  downPayment: number | null;
   conversationHash: string;
   conversation: { transcriptHash: string | null };
 };
@@ -28,13 +40,16 @@ export function selectCurrentExtraction<T extends ExtractionCandidate>(candidate
     candidates.find(
       (candidate) =>
         candidate.conversation.transcriptHash !== null &&
-        candidate.conversationHash === candidate.conversation.transcriptHash
+        candidate.conversationHash === candidate.conversation.transcriptHash &&
+        moneyCompatibilityIssues(candidate).length === 0
     ) ?? null
   );
 }
 
 /** Prisma `select` fragment every reader adds so `selectCurrentExtraction` can decide. */
 export const extractionCurrencySelect = {
+  budget: true,
+  downPayment: true,
   conversationHash: true,
   conversation: { select: { transcriptHash: true } }
 } as const;

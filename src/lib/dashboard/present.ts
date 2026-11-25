@@ -1,5 +1,7 @@
 import type { AssignmentReason, PriorityBand } from "@prisma/client";
-import { resolveTranscriptRole, type TranscriptRole } from "../ai/transcript";
+import { conversationHash, resolveTranscriptRole, type TranscriptMessage, type TranscriptRole } from "../ai/transcript";
+import { verifyEvidence } from "../ai/evidence";
+import { moneyCompatibilityIssues } from "../ai/current-extraction";
 import { evidenceSchema, type Evidence } from "../ai/schema";
 import type { ScoreExplanation } from "../scoring/score-lead";
 import type { UrgencyBucket } from "../scoring/hybrid";
@@ -79,7 +81,7 @@ export function presentAssignment(input: {
 }
 
 export const MISSING_AI_EXTRACTION_COPY =
-  "No hay extracción de IA para esta conversación.";
+  "No hay extracción de IA vigente y compatible para esta conversación. El historial se conserva sin modificaciones.";
 
 export type AiExtractionView = {
   motorcycleInterest: string | null;
@@ -91,9 +93,12 @@ export type AiExtractionView = {
   requestedAppointment: boolean;
   requestedQuote: boolean;
   evidence: Evidence;
+  evidenceStatus: "UNVERIFIED" | "CHECKED";
+  droppedEvidenceCount: number;
 };
 
 export function presentAiExtraction(row: {
+  conversationHash?: string;
   motorcycleInterest: string | null;
   budget: number | null;
   downPayment: number | null;
@@ -103,8 +108,13 @@ export function presentAiExtraction(row: {
   requestedAppointment: boolean;
   requestedQuote: boolean;
   evidence: unknown;
-} | null): AiExtractionView | null {
-  if (!row) return null;
+} | null, messages?: TranscriptMessage[]): AiExtractionView | null {
+  if (!row || moneyCompatibilityIssues(row).length > 0) return null;
+  // A migration-backfilled hash is not proof. Independently hash the text
+  // actually displayed before checking quote containment; never alter storage.
+  const parsed = evidenceSchema.safeParse(row.evidence);
+  const canCheck = messages !== undefined && row.conversationHash === conversationHash(messages) && parsed.success;
+  const checked = canCheck ? verifyEvidence(parsed.data, messages) : null;
   return {
     motorcycleInterest: row.motorcycleInterest,
     budget: row.budget,
@@ -114,7 +124,9 @@ export function presentAiExtraction(row: {
     mainObjection: row.mainObjection,
     requestedAppointment: row.requestedAppointment,
     requestedQuote: row.requestedQuote,
-    evidence: parseEvidence(row.evidence)
+    evidence: checked?.evidence ?? {},
+    evidenceStatus: checked ? "CHECKED" : "UNVERIFIED",
+    droppedEvidenceCount: checked?.dropped.length ?? 0
   };
 }
 

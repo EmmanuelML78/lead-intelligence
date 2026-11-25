@@ -60,7 +60,6 @@ export async function runScoringStage(
             purchaseIntent: true,
             requestedAppointment: true,
             requestedQuote: true,
-            downPayment: true,
             paymentMethod: true,
             mainObjection: true,
             confidence: true,

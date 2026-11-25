@@ -230,6 +230,8 @@ type OperationalLeadRow = {
     advisor: { id: string; name: string; companyId: string } | null;
   }>;
   aiExtractions: Array<{
+    budget: number | null;
+    downPayment: number | null;
     purchaseIntent: string;
     conversationHash: string;
     conversation: { transcriptHash: string | null };
@@ -543,6 +545,7 @@ export async function getLeadDetail(
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: {
           ...extractionCurrencySelect,
+          conversationId: true,
           motorcycleInterest: true,
           budget: true,
           downPayment: true,
@@ -556,9 +559,9 @@ export async function getLeadDetail(
       },
       conversations: {
         where: { isOrphan: false },
-        orderBy: { startedAt: "asc" },
-        take: 1,
+        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
         select: {
+          id: true,
           messages: {
             orderBy: { index: "asc" },
             select: {
@@ -585,6 +588,13 @@ export async function getLeadDetail(
     assignmentRow?.advisor && assignmentRow.advisor.companyId === scopedCompanyId
       ? assignmentRow.advisor
       : null;
+
+  const extraction = selectCurrentExtraction(lead.aiExtractions.filter((candidate) =>
+    lead.conversations.some((conversation) => conversation.id === candidate.conversationId)
+  ));
+  const conversation = extraction
+    ? lead.conversations.find((candidate) => candidate.id === extraction.conversationId)
+    : lead.conversations[0];
 
   return {
     leadId: lead.id,
@@ -632,8 +642,8 @@ export async function getLeadDetail(
           }
         : null
     ),
-    aiExtraction: presentAiExtraction(selectCurrentExtraction(lead.aiExtractions)),
-    conversation: (lead.conversations[0]?.messages ?? []).map(presentConversationMessage)
+    aiExtraction: presentAiExtraction(extraction, conversation?.messages),
+    conversation: (conversation?.messages ?? []).map(presentConversationMessage)
   };
 }
 
