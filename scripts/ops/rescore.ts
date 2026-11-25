@@ -19,6 +19,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { prisma } from "../../src/lib/db/client";
+import { reportLockError, withExclusiveLock } from "../../src/lib/db/exclusive-lock";
 import { runScoringStage } from "../../src/pipeline/scoring-stage";
 import { assertTarget, formatTarget, parseArgs, stringFlag, TargetError } from "./target";
 
@@ -46,7 +47,10 @@ async function main() {
 
   const running = await prisma.pipelineRun.count({ where: { status: "RUNNING" } });
   if (running > 0) {
-    throw new TargetError(`Refusing to run: ${running} pipeline run(s) are RUNNING. Scoring must not overlap with a pipeline run.`);
+    console.log(
+      `Note: ${running} pipeline run(s) are recorded as RUNNING. With --apply this command takes the exclusive lock, ` +
+        "so it is refused while a pipeline is really running; a RUNNING record without a live process is a leftover of an interrupted run."
+    );
   }
 
   // Urgency is the only score component that depends on the evaluation
@@ -77,8 +81,13 @@ async function main() {
     return;
   }
 
+  // Scoring writes LeadScore and LeadCurrentScore, so it must not overlap
+  // with the pipeline or with another recalculation.
   const startedAt = new Date();
-  const { report, scores, issues } = await runScoringStage(prisma, { decisionAt });
+  const { report, scores, issues } = await withExclusiveLock({ operation: "ops-rescore" }, async (lock) => {
+    console.log(`Exclusive lock acquired (database session ${lock.backendPid}).`);
+    return runScoringStage(prisma, { decisionAt });
+  });
   const finishedAt = new Date();
   const resultDigest = createHash("sha256")
     .update(
@@ -112,6 +121,7 @@ async function main() {
 
 main()
   .catch((error) => {
+    if (reportLockError(error)) return;
     console.error(error instanceof TargetError ? error.message : error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })

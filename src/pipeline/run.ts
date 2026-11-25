@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../lib/db/client";
+import { reportLockError, withExclusiveLock, type ExclusiveLock } from "../lib/db/exclusive-lock";
 import { parseMixedDate } from "../lib/normalization/date";
 import { runAiExtractionStage, type AiStageReport, type EligibleConversation } from "./ai-stage";
 import { runAssignmentStage, type AssignmentStageReport } from "./assignment-stage";
@@ -10,7 +11,13 @@ import { buildLeadRecord } from "./persist/build-lead-record";
 import { persistConversation, type NormalizedConversation } from "./persist/conversations";
 import { persistLead } from "./persist/leads";
 import { persistIssues, type PipelineIssueInput } from "./persist/pipeline-issue";
-import { createPipelineRun, emptyCounters, finalizePipelineRun, type PipelineRunCounters } from "./persist/pipeline-run";
+import {
+  createPipelineRun,
+  emptyCounters,
+  failInterruptedRuns,
+  finalizePipelineRun,
+  type PipelineRunCounters
+} from "./persist/pipeline-run";
 import { persistReferenceData } from "./persist/reference-data";
 import { runScoringStage, type ScoringStageReport } from "./scoring-stage";
 import type { RawAdvisor, RawConversation, RawLead, RawMotorcycle } from "./types";
@@ -28,8 +35,19 @@ async function readSources() {
   return { leads, advisors, motorcycles, conversations };
 }
 
+// The whole run holds the exclusive lock, so no other pipeline run and no
+// standalone command that writes scores or assignments can overlap with it.
 async function main() {
+  await withExclusiveLock({ operation: "pipeline" }, runPipeline);
+}
+
+async function runPipeline(lock: ExclusiveLock) {
+  console.log(`Exclusive lock acquired (database session ${lock.backendPid}).`);
   const { leads, advisors, motorcycles, conversations } = await readSources();
+  const interrupted = await failInterruptedRuns(prisma);
+  if (interrupted > 0) {
+    console.log(`Marked ${interrupted} earlier run(s) left in RUNNING as FAILED: they were interrupted before finishing.`);
+  }
   const pipelineRun = await createPipelineRun(prisma);
   const counters: PipelineRunCounters = { ...emptyCounters };
   const issues: PipelineIssueInput[] = [];
@@ -173,6 +191,7 @@ async function main() {
     // PIPELINE_SKIP_SCORING lets a brand-new DB ingest (and optionally AI)
     // before scoring/assignment so the demo snapshot follows ingest → AI →
     // score → assign instead of freezing pre-AI assignments.
+    await lock.assertHeld();
     const skipScoring = envFlag("PIPELINE_SKIP_SCORING");
     let scoringReport: ScoringStageReport | { status: "SKIPPED"; reason: string };
     if (skipScoring) {
@@ -189,6 +208,7 @@ async function main() {
     // 9. advisor assignment -------------------------------------------------
     // Consumes persisted hybrid-v1 scores. Never invokes Gemini. Business
     // date is explicit (ASSIGNMENT_BUSINESS_DATE) or America/Bogota today.
+    await lock.assertHeld();
     const skipAssignment = envFlag("PIPELINE_SKIP_ASSIGNMENT");
     let assignmentReport: AssignmentStageReport | { status: "SKIPPED"; reason: string };
     if (skipAssignment) {
@@ -208,6 +228,7 @@ async function main() {
     await persistIssues(prisma, pipelineRun.id, issues);
 
     // 11. finalize ------------------------------------------------------------
+    await lock.assertHeld();
     await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, {
       aiExtraction: aiStageReport,
       scoring: scoringReport,
@@ -284,6 +305,7 @@ function printAssignmentStageSummary(report: AssignmentStageReport) {
 
 main()
   .catch((error) => {
+    if (reportLockError(error)) return;
     console.error("\nPipeline run FAILED:", error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })

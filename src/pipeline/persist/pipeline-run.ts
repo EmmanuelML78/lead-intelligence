@@ -48,6 +48,23 @@ export async function createPipelineRun(db: PrismaClient) {
   return db.pipelineRun.create({ data: { status: "RUNNING" } });
 }
 
+export const INTERRUPTED_RUN_REASON =
+  "Interrupted: the process ended before the run was finalized.";
+
+/**
+ * Closes runs left in RUNNING by a process that died before finalizing.
+ *
+ * Call it only while holding the pipeline's exclusive lock: under the lock
+ * no other run can be in progress, so every RUNNING row is a leftover.
+ */
+export async function failInterruptedRuns(db: PrismaClient): Promise<number> {
+  const result = await db.pipelineRun.updateMany({
+    where: { status: "RUNNING" },
+    data: { status: "FAILED", finishedAt: new Date(), failureReason: INTERRUPTED_RUN_REASON }
+  });
+  return result.count;
+}
+
 export async function finalizePipelineRun(
   db: PrismaClient,
   id: string,
