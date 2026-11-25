@@ -17,5 +17,6 @@ export const REQUIRED_MIGRATIONS: readonly string[] = [
   "20260915010000_hybrid_priority_engine",
   "20260915020000_advisor_assignment",
   "20261124000000_assignment_drop_residual_defaults",
-  "20261124010000_lead_current_score"
+  "20261124010000_lead_current_score",
+  "20261125000000_conversation_transcript_snapshots"
 ];

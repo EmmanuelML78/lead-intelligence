@@ -30,6 +30,7 @@ import {
   type SlaView
 } from "./present";
 import { displayCompanyName, requireCompanyId, type DemoCompany } from "./tenant";
+import { extractionCurrencySelect, selectCurrentExtraction } from "../ai/current-extraction";
 
 export const QUEUE_PAGE_SIZE = 75;
 
@@ -228,7 +229,11 @@ type OperationalLeadRow = {
     assignedFor: Date;
     advisor: { id: string; name: string; companyId: string } | null;
   }>;
-  aiExtractions: Array<{ purchaseIntent: string }>;
+  aiExtractions: Array<{
+    purchaseIntent: string;
+    conversationHash: string;
+    conversation: { transcriptHash: string | null };
+  }>;
 };
 
 type AssignmentReasonFromRow = "ASSIGNED" | "NO_ACTIVE_ADVISOR" | "CAPACITY_EXHAUSTED" | "NO_ELIGIBLE_ADVISOR";
@@ -269,10 +274,10 @@ async function fetchOperationalLeads(
           advisor: { select: { id: true, name: true, companyId: true } }
         }
       },
+      // Newest first; the current one is chosen by transcript, not by age.
       aiExtractions: {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 1,
-        select: { purchaseIntent: true }
+        select: { purchaseIntent: true, ...extractionCurrencySelect }
       }
     }
   });
@@ -324,7 +329,7 @@ function toQueueRow(row: OperationalLeadRow): QueueLeadRow | null {
       leadAgeMinutes: explanation?.urgency.leadAgeMinutes,
       registeredAtAmbiguous: row.registeredAtAmbiguous
     }),
-    aiIntent: row.aiExtractions[0]?.purchaseIntent ?? null,
+    aiIntent: selectCurrentExtraction(row.aiExtractions)?.purchaseIntent ?? null,
     assignment: presentAssignment(
       assignmentRow
         ? {
@@ -536,8 +541,8 @@ export async function getLeadDetail(
       },
       aiExtractions: {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 1,
         select: {
+          ...extractionCurrencySelect,
           motorcycleInterest: true,
           budget: true,
           downPayment: true,
@@ -627,7 +632,7 @@ export async function getLeadDetail(
           }
         : null
     ),
-    aiExtraction: presentAiExtraction(lead.aiExtractions[0] ?? null),
+    aiExtraction: presentAiExtraction(selectCurrentExtraction(lead.aiExtractions)),
     conversation: (lead.conversations[0]?.messages ?? []).map(presentConversationMessage)
   };
 }

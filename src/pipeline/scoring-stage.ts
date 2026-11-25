@@ -6,6 +6,7 @@ import {
   type LeadPriorityScore,
   type ScoringMotorcycle
 } from "../lib/scoring/score-lead";
+import { extractionCurrencySelect, selectCurrentExtraction } from "../lib/ai/current-extraction";
 import { createPrismaLeadScoreStore, persistLeadScore } from "./persist/lead-scores";
 import type { PipelineIssueInput } from "./persist/pipeline-issue";
 
@@ -50,9 +51,11 @@ export async function runScoringStage(
         registeredAtAmbiguous: true,
         firstContactAt: true,
         motorcycleSku: true,
+        // Every extraction, newest first: the one to use is the one made
+        // from the conversation's current transcript, which is not always
+        // the newest (see src/lib/ai/current-extraction.ts).
         aiExtractions: {
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-          take: 1,
           select: {
             purchaseIntent: true,
             requestedAppointment: true,
@@ -61,7 +64,8 @@ export async function runScoringStage(
             paymentMethod: true,
             mainObjection: true,
             confidence: true,
-            motorcycleSku: true
+            motorcycleSku: true,
+            ...extractionCurrencySelect
           }
         }
       }
@@ -101,7 +105,7 @@ export async function runScoringStage(
         registeredAtAmbiguous: lead.registeredAtAmbiguous,
         firstContactAt: lead.firstContactAt,
         leadMotorcycleSku: lead.motorcycleSku,
-        aiExtraction: lead.aiExtractions[0] ?? null,
+        aiExtraction: selectCurrentExtraction(lead.aiExtractions),
         motorcycles,
         inventoryCandidates,
         decisionAt
