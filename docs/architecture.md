@@ -417,7 +417,79 @@ Pin `ASSIGNMENT_BUSINESS_DATE=2026-09-14`. The source snapshot is historical rel
 
 ### Health
 
-`GET /api/health` returns `{ status, database }` only.
+`GET /api/health` returns `{ status, database, schema }` only: three fixed words, never a name, a version, a count or an error message. Details go to the server log, once per distinct state.
+
+| Situation | HTTP | Body |
+| --- | --- | --- |
+| Database reachable and it has what this build needs | 200 | `ok`, `reachable`, `compatible` |
+| Database reachable but missing a migration, table, column or enum value this build needs | 503 | `error`, `reachable`, `incompatible` |
+| Database unreachable | 503 | `error`, `unreachable`, `unknown` |
+
+Two independent, read-only checks decide `schema`:
+
+1. **Required migrations.** Every name in `src/lib/health/required-migrations.ts` must be recorded in `_prisma_migrations` as finished and not rolled back. The deployed bundle does not contain `prisma/migrations`, so the list lives in code; a unit test fails when it differs from the folder.
+2. **Required objects.** Every table, column and enum value in the generated Prisma client's own datamodel must exist in the catalog. This needs no list to maintain and also catches objects removed behind the migration history.
+
+Both ignore whatever the database has beyond that, so a database that is **ahead** of the code (an additive migration applied before its code is deployed, which is the order the runbook requires) is healthy. The check is stricter than "the pages render": a pending migration the code could survive without, such as dropping a default, still answers 503 until it is applied.
+
+Cost: reachability is one `SELECT 1` per request. The schema inspection is four catalog queries, cached per server instance for 30 seconds when compatible and 5 seconds when not, so applying a pending migration is reflected within seconds and without a redeploy. The endpoint never runs a migration and never writes; a test runs it on a read-only session.
+
+This is what was missing on 2026-11-24: the previous endpoint checked reachability only and answered 200 while every score-reading page failed. A regression test builds that exact database (all migrations but the last) and requires 503 through the real route handler.
+
+## Operational reliability
+
+### One writer at a time
+
+The pipeline and the standalone commands that write scores or assignments are mutually incompatible. They take one exclusive lock:
+
+| Command | Operation name |
+| --- | --- |
+| `bun run pipeline` | `pipeline` |
+| `bun run ops:rescore ... --apply` | `ops-rescore` |
+| `bun run analysis:priority` | `analysis-priority` |
+| `bun run analysis:assignment` | `analysis-assignment` |
+| `scripts/milestone-3-1-live-check.ts` | `ai-live-check` |
+
+A command that finds the lock taken does not wait. It exits with code 75 and a message naming the operation that holds it, since when, and its database session, for example: `Cannot start "ops-rescore": "pipeline" is already running against this database since 2026-11-25T00:26:45.552Z (database session 181).` A refused pipeline run creates no `PipelineRun` row.
+
+The stage functions (`runScoringStage`, `runAssignmentStage`) take no lock. The lock belongs to the command, so the stages stay usable as a library and tests can run them in parallel on separate tenants.
+
+### Mechanism and why
+
+A PostgreSQL **session-level advisory lock** (`pg_try_advisory_lock`) held on a dedicated connection for the duration of the command (`src/lib/db/exclusive-lock.ts`).
+
+| Requirement | How it is met |
+| --- | --- |
+| Released on errors | `finally` unlocks and closes the session |
+| Released on unexpected termination | The lock belongs to the database session. When the process dies, its connection closes and PostgreSQL releases the lock. Measured: free within one second of `kill -9` |
+| No long transaction | No transaction is open; the session is idle between heartbeats |
+| Clear message | The holder tags its session with `application_name`; the refused command reads it from `pg_stat_activity` |
+| No new infrastructure | Uses the database that is already there; no table, no migration |
+
+Alternatives considered:
+
+| Option | Why not |
+| --- | --- |
+| Transaction-level advisory lock (`pg_advisory_xact_lock`) | Works through a pooler, but needs one transaction open for the whole run, which holds back vacuum and conflicts with Prisma's interactive transaction timeouts |
+| Lease row in a table with an expiry | Works through a pooler and is visible in SQL, but a dead holder blocks everyone until the lease expires, a paused holder can outlive its lease and overlap with the next one, and it needs a migration and a clock |
+| `PipelineRun.status = RUNNING` as the lock | A crashed run leaves `RUNNING` forever, and uniqueness would need a partial index Prisma cannot express |
+| Redis or another lock service | New infrastructure for a single manually run job |
+
+### Prisma and connection pooling
+
+- Prisma multiplexes queries over a pool and does not pin a connection outside a transaction, so a session lock taken through the shared client could be taken on one connection and released on another. The lock therefore uses its **own client limited to one connection** (`connection_limit=1`), with idle recycling disabled (`max_idle_connection_lifetime=0`).
+- A session lock is meaningless through a **transaction-mode pooler** (PgBouncer, Neon's `-pooler` endpoint): consecutive statements may reach different server sessions. The lock recognizes a pooled URL and refuses it with instructions. It connects with `DIRECT_URL` when set, otherwise `DATABASE_URL`. The dashboard on Vercel is unaffected: it takes no lock and can keep using the pooled URL.
+- If the lock's single connection is ever replaced (network drop, server restart, compute suspended), the lock is gone without the process noticing. A heartbeat every 15 seconds, and an explicit check before the scoring, assignment and finalize stages, compare the session's backend id and its entry in `pg_locks`. On a mismatch the command stops with `LockLostError` instead of continuing unprotected, and the pipeline records the run as `FAILED`.
+
+### After a crash
+
+A killed pipeline leaves its `PipelineRun` row in `RUNNING`. The next pipeline run, once it holds the lock, knows no other run can be alive, marks those rows `FAILED` with the reason `Interrupted: the process ended before the run was finalized.`, and proceeds. Nothing has to be cleaned by hand.
+
+### Limits
+
+- A machine that loses power or network without closing its connection keeps the lock until the server notices the dead connection (TCP keepalive or the provider's proxy timeout). The refused command prints the holder's database session id; `SELECT pg_terminate_backend(<id>)` frees it at once.
+- The lock is per database. It does not coordinate with `prisma migrate deploy`, which uses Prisma's own advisory lock; the deployment runbook's freeze still applies to migrations.
+- The lock orders writers; it does not make a stage transactional. A run killed half way leaves the rows it had already written, which the next idempotent run completes.
 
 ### Secrets
 
