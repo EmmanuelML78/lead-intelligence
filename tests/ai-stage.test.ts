@@ -106,6 +106,22 @@ test("missing AI_API_KEY: stage reports SKIPPED, never throws, ingestion is unaf
   assert.equal(issues.length, 0);
 });
 
+test("historical incompatible cache blocks paid retries and remains unchanged", async () => {
+  const { db, rows } = createFakeDb();
+  const provider = new CountingProvider("model-a");
+  await persistAiExtraction(db, {
+    leadId: "LD-1", conversationId: "CONV-1", conversationHash: conversationHashFor(messages),
+    provider: "fake", model: provider.model, promptVersion: AI_PROMPT_VERSION,
+    extractionVersion: "v1", data: baseExtraction({ budget: -100 }) as never
+  });
+  const before = structuredClone(rows);
+  const result = await runAiExtractionStage(db, [{ conversationId: "CONV-1", leadId: "LD-1", messages }], catalog, { env: {}, provider });
+  assert.equal(result.report.modelCalls, 0);
+  assert.equal(provider.callCount, 0);
+  assert.equal(result.report.cacheHits, 1);
+  assert.deepEqual(rows, before);
+});
+
 test("createAiProviderFromEnv returns null without an API key, a GeminiProvider with one", () => {
   assert.equal(createAiProviderFromEnv({}), null);
   const provider = createAiProviderFromEnv({ AI_API_KEY: "test-key" });

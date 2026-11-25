@@ -15,6 +15,7 @@ The first release it covered was the pair of migrations from PR #2 and PR #3. Th
 - Never put a connection string in a command line, a file inside the repository, a chat, a ticket, a screenshot or a pull request. See [Handling credentials](#handling-credentials).
 - One operator, one target per PowerShell window. Close the window when you finish with that target.
 - Do not run `bun run pipeline` during a deployment. It ingests, may call the AI provider if a key is configured, and assigns advisors.
+- The snapshot release has a **disposable-copy-only** exception: use `ops:reconcile-rehearsal` as described in its release notes. It forces Gemini, scoring and assignment off. This is not permission to reconcile production.
 
 ## How deployments happen
 
@@ -61,6 +62,8 @@ On 2026-11-24 CI was green, the Vercel deployment was reported as successful, an
 | `bun run ops:fingerprint compare <file> --expect-host <host> --must-match <tables\|all>` | Reports each table as unchanged, changed, new or removed; fails if a required table differs | No |
 | `bun run ops:rescore --expect-host <host> --decision-at <ISO instant>` | Prints the scoring plan only | No |
 | `bun run ops:rescore ... --apply --report <file>` | Recalculates scores only: no ingestion, no AI call, no assignment | `LeadScore`, `LeadCurrentScore` |
+| `bun run ops:release-audit --expect-host <host> --report <file>` | Historical monetary incompatibilities, reconciliation forecast and a fingerprint of pre-existing Conversation columns; works before or after the snapshot migration | No (local report only; database transaction is read-only) |
+| `bun run ops:reconcile-rehearsal --expect-host <copy-host> --production-host <production-host>` | Runs ingestion/reconciliation on the disposable copy, with Gemini, scoring and assignment forced off | Yes: disposable copy only; refuses the named production endpoint |
 
 All of them print only the host, the database name, whether the connection is pooled and a 12-character fingerprint of the URL. They never print the user, the password or row contents.
 
@@ -289,6 +292,8 @@ Step { bun run ops:fingerprint compare rehearsal-before.json --expect-host $Expe
 
 `--must-match all` requires every table that existed before the migration to be byte-identical. New tables are reported as `new` and do not fail the check.
 
+**Snapshot migration exception:** adding/backfilling `Conversation.transcriptHash` changes the full-row hash of `Conversation`. For that release only, replace this comparison with the two-part proof in [Snapshot release rehearsal](#snapshot-release-rehearsal); do not waive a changed pre-existing column or any other existing table.
+
 Then rehearse the recalculation with the instant chosen in [Evaluation instant and reproducibility](#evaluation-instant-and-reproducibility):
 
 ```powershell
@@ -329,6 +334,8 @@ Step { bunx prisma migrate status }
 Step { bunx prisma migrate diff --from-url $env:DATABASE_URL --to-schema-datamodel prisma/schema.prisma --exit-code }
 Step { bun run ops:fingerprint compare production-before.json --expect-host $ExpectHost --must-match all }
 ```
+
+For the snapshot migration use the same two-part migration-only proof as in [Snapshot release rehearsal](#snapshot-release-rehearsal), with `production-before.json` and fresh pre/post-migration audit reports. This changes the comparison, not the requirement for production migration approval.
 
 Then check that production, still running the previous code, is healthy:
 
@@ -498,6 +505,76 @@ Problems and decisions:
 - With the new queue order, recomputing assignments from scratch would change 46 of 1,352 rows on the synthetic dataset. This runbook does not recompute assignments.
 
 **Status: both migrations were applied to production on 2026-11-24**, out of order with the merge. What happened and what was verified is in the incident record below.
+
+## Release notes for the conversation snapshot migration
+
+| Migration | Effect | Compatible with the code in production before the merge |
+| --- | --- | --- |
+| `20261125000000_conversation_transcript_snapshots` | Adds the nullable column `Conversation.transcriptHash` and the table `ConversationSnapshot`; fills the new column from the newest extraction of each conversation | Yes: additive, and the previous code reads neither |
+
+- **Order: migrate before merging.** The new code selects `Conversation.transcriptHash` in every score-reading query. Deployed against a database without the column, those pages fail and `/api/health` answers 503.
+- **The initial hash is provisional.** The backfill copies the newest historical extraction's hash; it does not hash `Message` rows and does not verify evidence. Reconciliation computes the canonical hash of the real source transcript, atomically makes stored messages match it, and records a snapshot. A historical transcript never captured cannot be reconstructed by this migration. The migration is additive; its old-column preservation must be proved on this release's copy, not inferred from an earlier rehearsal.
+- **The first pipeline run after the deployment is where behavior changes.** It sets `transcriptHash` from the real messages, writes one snapshot per conversation, and removes message rows the source no longer contains. From then on an extraction made from a transcript that no longer exists stops being used: that lead shows no AI extraction and is scored with the neutral fallback until the conversation is analysed again.
+- **Take the backup before that first pipeline run**, not only before the migration: it is the step that deletes rows. Use `ops:fingerprint` before and after; `Message` and `Conversation` are expected to change, `AiExtraction` must not.
+- `ops:rescore` can be run before or after reconciliation. Before, it uses provisional backfilled hashes. The new reader also excludes incompatible historical monetary values, so scores can differ from the previous release even before reconciliation. Preserve those rows unchanged, document the exclusions and use the neutral fallback; do not round/clamp amounts, bump AI versions or automatically re-extract them.
+- Rollback of the schema, as a new migration: `DROP TABLE "ConversationSnapshot"; ALTER TABLE "Conversation" DROP COLUMN "transcriptHash";`. Rolling back only the code keeps both and is safe.
+
+### Snapshot release rehearsal
+
+**Gate:** first complete steps 0–3: confirmed green CI on the immutable release SHA, freeze, actual pending migration list, an independent unexpired untouched backup and a separate disposable copy. Record the production endpoint as a deny-list value; do not connect to the backup. Use the same release SHA and source files throughout. Actual counts are **unknown until these commands run**. Reports contain hashes, counts and extraction IDs/reasons, not credentials or message text. Keep them outside the checkout.
+
+In the disposable copy's window, after the normal target/credential setup:
+
+```powershell
+$ProductionHost = "<verified production endpoint id>"  # deny-list only
+$Evidence = "<absolute operator evidence directory outside the checkout>"
+Step { bun run ops:db-status --expect-host $ExpectHost }
+Step { bun run ops:release-audit --expect-host $ExpectHost --report "$Evidence/audit-before.json" }
+Step { bun run ops:fingerprint snapshot "$Evidence/before.json" --expect-host $ExpectHost }
+Step { bun run db:deploy }
+Step { bunx prisma migrate status }
+Step { bunx prisma migrate diff --from-url $env:DATABASE_URL --to-schema-datamodel prisma/schema.prisma --exit-code }
+Step { bun run ops:release-audit --expect-host $ExpectHost --report "$Evidence/audit-migrated.json" }
+
+# Migration-only proof: every old table except Conversation is byte-identical.
+$Before = Get-Content "$Evidence/before.json" -Raw | ConvertFrom-Json
+$Required = ($Before.tables.PSObject.Properties.Name | Where-Object { $_ -ne 'Conversation' }) -join ','
+Step { bun run ops:fingerprint compare "$Evidence/before.json" --expect-host $ExpectHost --must-match $Required }
+# All pre-existing Conversation columns and its row count must ALSO match.
+$A = Get-Content "$Evidence/audit-before.json" -Raw | ConvertFrom-Json
+$B = Get-Content "$Evidence/audit-migrated.json" -Raw | ConvertFrom-Json
+if ($A.conversationLegacyFingerprint.rows -ne $B.conversationLegacyFingerprint.rows -or $A.conversationLegacyFingerprint.md5 -ne $B.conversationLegacyFingerprint.md5) { throw 'Pre-existing Conversation data changed' }
+if ($A.sourceSha256 -ne $B.sourceSha256) { throw 'Source changed during rehearsal' }
+
+# Explicit controls, also forced inside the guarded rehearsal command.
+$env:AI_API_KEY = ''
+$env:AI_MAX_CONVERSATIONS = '0'
+$env:PIPELINE_SKIP_ASSIGNMENT = '1'
+$env:PIPELINE_SKIP_SCORING = '1'
+Step { bun run ops:fingerprint snapshot "$Evidence/migrated.json" --expect-host $ExpectHost }
+Step { bun run ops:reconcile-rehearsal --expect-host $ExpectHost --production-host $ProductionHost }
+Step { bun run ops:release-audit --expect-host $ExpectHost --report "$Evidence/audit-reconciled.json" }
+Step { bun run ops:fingerprint compare "$Evidence/migrated.json" --expect-host $ExpectHost --must-match AiExtraction,Assignment,LeadScore,LeadCurrentScore }
+Step { bun run ops:fingerprint snapshot "$Evidence/reconciled.json" --expect-host $ExpectHost }
+Step { bun run ops:reconcile-rehearsal --expect-host $ExpectHost --production-host $ProductionHost }
+Step { bun run ops:release-audit --expect-host $ExpectHost --report "$Evidence/audit-repeated.json" }
+$StableTables = ($Before.tables.PSObject.Properties.Name | Where-Object { $_ -notin @('PipelineRun','PipelineIssue') }) + @('ConversationSnapshot')
+Step { bun run ops:fingerprint compare "$Evidence/reconciled.json" --expect-host $ExpectHost --must-match ($StableTables -join ',') }
+```
+
+Review and record **before authorizing production**:
+
+- `incompatibleExtractions`: count and IDs with per-field reasons. An audit success means the report was produced, not that every row is compatible. The exclusion policy preserves history; any correction or paid re-analysis is a separate human decision. Fractional values already truncated by older writers cannot be recovered or detected from integer columns alone.
+- `messagesWouldRemove` / `messagesWouldAdd` in the migrated audit: the forecast for the first reconciliation. Require the removal forecast to equal `PipelineRun.metadata.conversations.messagesRemoved` and the total Message-count delta to equal additions minus removals. The metadata's `messagesAdded` covers changed **existing** conversations only; the audit's total also includes new conversations. Stop on a discrepancy. Conversations absent from the source are untouched, not deleted.
+- `hashCurrentExtractionsWouldExpire`: historical rows losing hash currency. `usableExtractionsWouldExpire`: compatible rows losing it. `leadsWouldLoseUsableExtraction`: distinct leads losing every usable candidate. These are different quantities; report all three, not just leads. The reports use the same COP predicate and canonical hashing as readers/ingestion.
+- `transcriptsNotMatchingRecordedHash`: independently detected mismatch between stored messages and recorded/bootstrap hashes, **not verified extraction evidence**. Historical quotes are checked locally only when the displayed transcript's independent hash matches; otherwise they are hidden as unverified.
+- First and second runs: AI `modelCalls = 0`, assignment/scoring `SKIPPED`, no failures. Repeated audit: zero pending message removals/additions and zero additional hash-current expiry; all stable-table fingerprints unchanged. New PipelineRun history and issue observation counters are expected, not an idempotence defect. Require the same `sourceSha256` in every audit.
+- Run the step-4 `ops:rescore` plan/apply/repeat at the same recorded `--decision-at`, take fresh pre-rescore fingerprints and require `Assignment`, `AiExtraction`, `Message`, `Conversation`, `ConversationSnapshot` and all other non-score tables unchanged. Require zero failures, second `created: 0` and identical result digest. Do not use the unguarded pipeline to score.
+- Inspect the disposable-copy dashboard: lead with multiple conversations, excluded historical amount, evidence status, queue, company switch and `/api/health`. CI must execute the integration regressions with **zero skipped tests**; a local DB-less run is not that proof.
+
+**STOP here for human approval.** Supply the reports, backup identity/expiry, exact pending migrations, message deletion forecast, extraction expiry counts and idempotence results. A synthetic empty-database CI run is not a rehearsal of production history. This release is not deployment-ready while any of these proofs is missing.
+
+After separate approval, apply the migration **before merge** using step 5 and the same migration-only two-part proof. Confirm the old code is healthy. Obtain separate merge approval; then follow steps 6–8, verifying `/api/health`, dashboard routes, one multi-conversation lead and company switching after deployment. **Production reconciliation is not authorized by rehearsal or merge approval**: it deletes messages and requires its own explicit scope/approval after the forecast. Never use the disposable-copy command on production.
 
 ## Incident record: 2026-11-24
 

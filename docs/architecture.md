@@ -47,6 +47,7 @@ Customer identity is deterministic, never fuzzy, and always scoped by `companyId
 `Lead.id` is the raw `lead_id` from the source (a natural key, not a generated id), so persistence is a plain upsert by id. `sourceFingerprint` is a SHA-256 hash of the canonically key-sorted raw row (`src/pipeline/persist/fingerprint.ts`), stable across reruns regardless of column order.
 
 - Same `lead_id` seen again with the **same** fingerprint → treated as already ingested, no write.
+- This no-op check happens before resolving/upserting `Customer`: its complete row (including `updatedAt`) and the existing customer link remain unchanged. Replaying an unchanged lead cannot overwrite a shared profile updated by another changed lead. New or changed source rows still use the existing transactional customer-deduplication path.
 - Same `lead_id` seen again with a **different** fingerprint → mutable fields are updated and a `SOURCE_RECORD_CHANGED` issue is recorded.
 - Same `lead_id` appearing more than once **within one source file** (e.g. `LD-00011`, `LD-00251`) → the first occurrence is canonical; every later occurrence is reported as a `DUPLICATE_LEAD_ID` issue and is not persisted separately.
 
@@ -55,6 +56,16 @@ Customer identity is deterministic, never fuzzy, and always scoped by `companyId
 `Conversation.id` is the source's `conversacion_id` (already globally unique) and upserts cleanly. A conversation whose `lead_id` does not match any ingested lead is still persisted with `isOrphan = true`, `leadId = null`, and a recorded `ORPHAN_CONVERSATION` issue — it is never dropped or allowed to crash the run.
 
 The source gives messages no id at all, so `Message.id` is derived deterministically from `conversationId + index-in-conversation + sender + sentTime + text` (SHA-256, prefixed `msg_`). This keeps message persistence idempotent without ever inventing a random id that would duplicate on rerun.
+
+**Current snapshot.** The `Message` rows of a conversation are exactly the messages the source contains now, in the same order: nothing more. Because a row's id includes its position and content, an edited, moved or removed message is a different id. `persistConversation` reads the stored ids, deletes the ones that are not in the incoming transcript and inserts the missing ones; an unchanged message keeps its row and nothing is updated in place. Before this, rows were only ever added, so an edited message left its old version next to the new one at the same position, and a removed message stayed forever.
+
+**History.** After reconciliation, `Conversation.transcriptHash` records which transcript the stored messages are (the same SHA-256 used as the AI cache key). From that point onward, every distinct transcript observed by reconciliation is stored once in `ConversationSnapshot` (`conversationId` + `transcriptHash`, written once and never updated). A source that returns to an earlier transcript reuses that entry. The migration initializes the hash from the newest historical extraction, not from stored messages. This bootstrap preserves selection continuity but is not transcript verification. Reconciliation computes the real source transcript hash and reconciles the messages atomically; it does not reconstruct transcripts that were never captured.
+
+"Transcript" means the canonical transcript: the exact text a model is given. Messages that differ only in what that text does not carry (spaces around a message, the spelling of the sender) are the same transcript, so they share one hash, one snapshot entry holding the messages as first seen, and one extraction; a model would read the same thing. The `Message` rows, in contrast, always mirror the source byte for byte.
+
+**Atomicity and idempotency.** The conversation row, the removal, the insertion and the snapshot are one transaction: a reader sees the old transcript or the new one, never a mixture, and a failure half way (tested with a message PostgreSQL refuses to store) leaves the previous transcript untouched. Persisting the same transcript again leaves every row as it was: no message is inserted or deleted, and the conversation row is rewritten with the same values. A conversation with no messages is valid and has no rows.
+
+The pipeline run records how much the stored messages of already known conversations had to change in `PipelineRun.metadata.conversations` (`conversationsChanged`, `messagesAdded`, `messagesRemoved`). The first run after this change also removes any rows left behind by the earlier behavior, and reports them there.
 
 ### Reference data & inventory mapping decision
 
@@ -110,7 +121,11 @@ Converts persisted `Conversation`/`Message` rows into structured, validated, ver
 
 ### Extraction contract (`src/lib/ai/schema.ts`)
 
-`motorcycleInterest` (string|null), `budget`/`downPayment` (number|null), `paymentMethod` (`CASH`|`CREDIT`|`UNKNOWN`), `purchaseIntent` (`HIGH`|`MEDIUM`|`LOW`|`UNKNOWN`), `mainObjection` (`PRICE`|`CREDIT`|`AVAILABILITY`|`MODEL`|`TIMING`|`COMPARISON`|`OTHER`|`NONE`|`UNKNOWN`), `requestedAppointment`/`requestedQuote` (boolean), `confidence` (0..1, extraction confidence — **not** a sales-probability signal), and `evidence` (short verbatim excerpts per field, empty when the field is null/UNKNOWN). Validated with Zod (`aiExtractionResultSchema`); a provider response that fails validation is never persisted as a real extraction.
+`motorcycleInterest` (string|null), `budget`/`downPayment` (whole COP integer|null), `paymentMethod` (`CASH`|`CREDIT`|`UNKNOWN`), `purchaseIntent` (`HIGH`|`MEDIUM`|`LOW`|`UNKNOWN`), `mainObjection` (`PRICE`|`CREDIT`|`AVAILABILITY`|`MODEL`|`TIMING`|`COMPARISON`|`OTHER`|`NONE`|`UNKNOWN`), `requestedAppointment`/`requestedQuote` (boolean), `confidence` (0..1, extraction confidence — **not** a sales-probability signal), and `evidence` (short verbatim excerpts per field, empty when the field is null/UNKNOWN). Validated with Zod (`aiExtractionResultSchema`); a provider response that fails validation is never persisted as a real extraction.
+
+**Monetary amounts.** `budget` and `downPayment` are whole Colombian pesos: integers from 0 to 2,147,483,647, the range of the PostgreSQL `INTEGER` columns that store them. The contract accepts exactly what the column can hold and rejects everything else with a reason: decimals, negatives, larger values, text. This matters because the layer below does not protect the value. Measured against PostgreSQL through Prisma: `8500000.5` is stored as `8500000` with no error, a negative amount is stored as given, and only an overflow fails, with an opaque driver error. Under the previous contract (`number`, non-negative) a fractional amount therefore passed validation and was silently truncated. Nothing is rounded or clamped: a fractional or oversized amount is more likely a misread conversation than a real figure. The schema sent to the provider asks for `integer` to match.
+
+Rows already stored satisfy the tightened contract (they could only ever be stored as integers), so `AI_EXTRACTION_VERSION` is unchanged and the cache stays valid. There is no database `CHECK` for non-negative amounts; the contract is the only guard against a negative value.
 
 ### Canonical transcript & conversation hash (`src/lib/ai/transcript.ts`)
 
@@ -124,13 +139,39 @@ Messages are rendered in persisted `index` order as `[HH:MM] ROLE: text`, mappin
 
 Before calling the provider, the AI stage looks for an existing `AiExtraction` matching `(conversationId, conversationHash, promptVersion, model, extractionVersion)`. A match is a cache hit — the provider is never called and no new row is written. A miss (changed transcript, prompt version, model, or extraction contract) always creates a **new** row; `AiExtraction` history is never overwritten or deleted, so every past extraction attempt for a conversation stays queryable.
 
+**Which extraction is current.** An extraction describes the transcript it was made from. It is usable only while `AiExtraction.conversationHash` equals its conversation's `transcriptHash` and both monetary amounts satisfy the current COP contract (`src/lib/ai/current-extraction.ts`). Scoring, the lead queue and the lead detail use this shared selector. A return to an earlier transcript can reuse an older compatible extraction; a transcript nobody has analysed yet has no extraction, so scoring applies the neutral fallback. Extractions are never deleted. Historical extractions may predate snapshots: a hash alone does not establish that their original transcript was captured.
+
+**Historical compatibility and evidence.** Negative, fractional, textual or out-of-range amounts are not clamped, rounded or rewritten. Incompatible extractions remain in history but are excluded from operational selection; without a compatible current candidate, scoring uses the neutral fallback. The cache still blocks automatic paid retries for those rows; neither prompt nor extraction versions are bumped to force re-analysis. Run the read-only release audit before rollout and record incompatibilities for explicit human disposition. The detail shows the conversation belonging to the selected extraction, or the deterministic earliest non-orphan conversation when none is selected. Evidence is checked locally against that displayed transcript only after its independently computed hash matches the extraction. Until then quotes are hidden and labeled unverified. Unmatched quotes are omitted without altering storage. A containment check confirms quoted text exists, not that the AI interpretation is correct.
+
+A conversation with no message text is not sent to the model (`skippedEmptyTranscript`).
+
+Readers load every extraction of a lead, newest first with an ID tie-breaker, and pick the current compatible one in code, because the comparison is between two tables. History per lead is not capped. For a lead with several conversations the detail displays the conversation belonging to its selected extraction, never an independently selected transcript.
+
 ### Provider abstraction (`src/lib/ai/provider.ts`, `src/lib/ai/providers/gemini.ts`)
 
 Business logic (`extractConversation`) only depends on the small `AiExtractionProvider` interface (`name`, `model`, `extract()`), never a concrete SDK. The one implemented provider calls Gemini's REST `generateContent` endpoint directly via `fetch` (`responseMimeType: application/json` + `responseSchema`) — no SDK dependency, since the request is a single small JSON POST and the assessment rules prefer minimal infrastructure. Every response is re-validated with Zod regardless of what the provider enforces. Swapping/adding a provider means writing one new class against this interface; nothing else in the pipeline changes.
 
 ### Retries, concurrency, and failure handling
 
-`extractConversation` retries a small bounded number of times (default 3) shared across retryable provider errors (network/429/5xx) and Zod validation failures; permanent provider errors (401/403/400) fail immediately without consuming the retry budget. The AI stage (`src/pipeline/ai-stage.ts`) processes eligible conversations with bounded concurrency (`AI_CONCURRENCY`, default 4) — never one request per conversation at once. Provider/validation failures are recorded as `PipelineIssue` rows (`AI_EXTRACTION_PROVIDER_FAILED` / `AI_EXTRACTION_VALIDATION_FAILED`, `WARNING`) instead of ever being persisted as a fake/malformed `AiExtraction`.
+Every retry is another paid request, so each kind of failure is retried only as far as a retry can help (`src/lib/ai/extract-conversation.ts`):
+
+| Failure | Policy |
+| --- | --- |
+| Transient: network, timeout, HTTP 408/429/5xx | Up to 3 calls in total, exponential backoff from 500 ms capped at 8 s, with 20% jitter |
+| The provider says how long to wait (`Retry-After`, or Gemini's `retryDelay`) | Honored when longer than the backoff; above 20 s the conversation fails at once instead of holding a worker |
+| Permanent: 400/401/403/404, unusable 2xx body | Not retried |
+| Output that fails validation | One retry. The request is deterministic (temperature 0), so the same answer is the likely result; it used to consume the whole budget |
+| Cancellation | Stops immediately, including in the middle of a wait |
+
+**Timeout and cancellation.** `fetch` has no time limit of its own, so a provider that accepted the connection and never answered held a worker forever. Each Gemini request is now limited to 30 seconds (`AI_TIMEOUT_MS`), covering the whole exchange including reading the body, and carries an `AbortSignal`. Every step is also raced against that signal, so the limit holds even if the transport does not react to it. A timeout is a retryable failure, as is a connection cut while the body is arriving; a cancellation is not a failure at all.
+
+**The stage isolates each conversation** (`src/pipeline/ai-stage.ts`). Eligible conversations run with bounded concurrency (`AI_CONCURRENCY`, default 4). Nothing one conversation does can end the stage: a provider failure, invalid output, or a database error while looking up or storing its extraction is counted and reported as an issue for that conversation (`AI_EXTRACTION_PROVIDER_FAILED`, `AI_EXTRACTION_VALIDATION_FAILED`, `AI_EXTRACTION_STORE_FAILED`), and the rest carry on. Previously an error while storing one extraction rejected the stage and failed the whole pipeline run. If the cache lookup fails, the model is not called for that conversation.
+
+**Rate limits stop the stage.** On HTTP 429 no further calls are started and the requests in flight are cancelled, instead of paying for calls that will be refused; the report says `STOPPED` and how many conversations were left (`skippedDueToQuota`). When the provider answered, its status decides: a 500 or 400 whose text happens to mention a quota does not stop the batch. Only a failure that carries no status is judged by its text. A cancellation requested by the caller is counted separately (`skippedDueToCancellation`).
+
+**Evidence is checked against the transcript** (`src/lib/ai/evidence.ts`). Each excerpt the model returns must appear in a message of the conversation: its words, in order, in one message. Case, accents, punctuation and spacing are ignored, an ellipsis stands for skipped text, and the role label the transcript shows may be part of the quote. A number is one word including its separators, so `500.000` is not a quote of `2.500.000`, and `ñ` is not `n`. An excerpt that does not appear is not stored and is reported (`AI_EVIDENCE_NOT_IN_TRANSCRIPT`, `evidenceExcerptsDropped`). The extracted values are kept as returned: clearing a value because its quote could not be matched would change what scoring receives, which is a business decision.
+
+It is a containment check, not comprehension. It keeps a quote whose meaning changes when cut (`quiero crédito` inside `no quiero crédito`), and it drops a correct quote that spells an amount differently (`8500000` for `8.500.000`). It applies to extractions made from now on: rows already stored keep the evidence they were stored with, and the extraction version was not bumped, to avoid paying again for every conversation. Measured on the hand-curated evaluation fixture, all 64 excerpts of the 18 cases are found in their transcripts; how often a real model returns unsupported quotes has not been measured, because no provider call was made for this change.
 
 ### Missing API key never fails the pipeline
 

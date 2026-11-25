@@ -34,6 +34,12 @@ export function AiExtractionPanel({ extraction }: { extraction: AiExtractionView
     <section className="panel">
       <div className="eyebrow">Inteligencia de la conversación</div>
       <h2>Extracción de IA</h2>
+      <p className="muted">
+        {extraction.evidenceStatus === "CHECKED"
+          ? "Citas contrastadas con el texto mostrado; no verifican la interpretación de la IA."
+          : "Evidencia histórica no verificada contra este transcript; las citas se ocultan."}
+        {extraction.droppedEvidenceCount > 0 && ` Se omitieron ${extraction.droppedEvidenceCount} citas que no aparecen en el texto.`}
+      </p>
       <dl className="facts">
         <div>
           <dt>Interés de motocicleta</dt>

@@ -30,6 +30,7 @@ import {
   type SlaView
 } from "./present";
 import { displayCompanyName, requireCompanyId, type DemoCompany } from "./tenant";
+import { extractionCurrencySelect, selectCurrentExtraction } from "../ai/current-extraction";
 
 export const QUEUE_PAGE_SIZE = 75;
 
@@ -228,7 +229,13 @@ type OperationalLeadRow = {
     assignedFor: Date;
     advisor: { id: string; name: string; companyId: string } | null;
   }>;
-  aiExtractions: Array<{ purchaseIntent: string }>;
+  aiExtractions: Array<{
+    budget: number | null;
+    downPayment: number | null;
+    purchaseIntent: string;
+    conversationHash: string;
+    conversation: { transcriptHash: string | null };
+  }>;
 };
 
 type AssignmentReasonFromRow = "ASSIGNED" | "NO_ACTIVE_ADVISOR" | "CAPACITY_EXHAUSTED" | "NO_ELIGIBLE_ADVISOR";
@@ -269,10 +276,10 @@ async function fetchOperationalLeads(
           advisor: { select: { id: true, name: true, companyId: true } }
         }
       },
+      // Newest first; the current one is chosen by transcript, not by age.
       aiExtractions: {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 1,
-        select: { purchaseIntent: true }
+        select: { purchaseIntent: true, ...extractionCurrencySelect }
       }
     }
   });
@@ -324,7 +331,7 @@ function toQueueRow(row: OperationalLeadRow): QueueLeadRow | null {
       leadAgeMinutes: explanation?.urgency.leadAgeMinutes,
       registeredAtAmbiguous: row.registeredAtAmbiguous
     }),
-    aiIntent: row.aiExtractions[0]?.purchaseIntent ?? null,
+    aiIntent: selectCurrentExtraction(row.aiExtractions)?.purchaseIntent ?? null,
     assignment: presentAssignment(
       assignmentRow
         ? {
@@ -536,8 +543,9 @@ export async function getLeadDetail(
       },
       aiExtractions: {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 1,
         select: {
+          ...extractionCurrencySelect,
+          conversationId: true,
           motorcycleInterest: true,
           budget: true,
           downPayment: true,
@@ -551,9 +559,9 @@ export async function getLeadDetail(
       },
       conversations: {
         where: { isOrphan: false },
-        orderBy: { startedAt: "asc" },
-        take: 1,
+        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
         select: {
+          id: true,
           messages: {
             orderBy: { index: "asc" },
             select: {
@@ -580,6 +588,13 @@ export async function getLeadDetail(
     assignmentRow?.advisor && assignmentRow.advisor.companyId === scopedCompanyId
       ? assignmentRow.advisor
       : null;
+
+  const extraction = selectCurrentExtraction(lead.aiExtractions.filter((candidate) =>
+    lead.conversations.some((conversation) => conversation.id === candidate.conversationId)
+  ));
+  const conversation = extraction
+    ? lead.conversations.find((candidate) => candidate.id === extraction.conversationId)
+    : lead.conversations[0];
 
   return {
     leadId: lead.id,
@@ -627,8 +642,8 @@ export async function getLeadDetail(
           }
         : null
     ),
-    aiExtraction: presentAiExtraction(lead.aiExtractions[0] ?? null),
-    conversation: (lead.conversations[0]?.messages ?? []).map(presentConversationMessage)
+    aiExtraction: presentAiExtraction(extraction, conversation?.messages),
+    conversation: (conversation?.messages ?? []).map(presentConversationMessage)
   };
 }
 

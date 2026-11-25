@@ -21,6 +21,7 @@ import {
 import { persistReferenceData } from "./persist/reference-data";
 import { runScoringStage, type ScoringStageReport } from "./scoring-stage";
 import type { RawAdvisor, RawConversation, RawLead, RawMotorcycle } from "./types";
+import { normalizeSourceMessages } from "./conversation-source";
 import { validateRawLead } from "./validate";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -150,14 +151,13 @@ async function runPipeline(lock: ExclusiveLock) {
     // for AI extraction in stage 7 -- an orphan conversation has no Lead to
     // attach structured intelligence to.
     const eligibleConversations: EligibleConversation[] = [];
+    // How much the stored messages of already known conversations had to
+    // change to match the source. This also covers rows left behind by an
+    // earlier version of this stage, which the first run cleans up.
+    const transcriptChanges = { conversationsChanged: 0, messagesAdded: 0, messagesRemoved: 0 };
     for (const raw of conversations) {
       const leadId = knownLeadIds.has(raw.lead_id) ? raw.lead_id : null;
-      const messages = raw.mensajes.map((m, index) => ({
-        index,
-        sender: m.emisor?.trim() || "unknown",
-        sentTime: m.hora?.trim() || null,
-        text: m.texto ?? ""
-      }));
+      const messages = normalizeSourceMessages(raw);
       const normalizedConversation: NormalizedConversation = {
         id: raw.conversacion_id,
         sourceLeadId: raw.lead_id,
@@ -172,6 +172,11 @@ async function runPipeline(lock: ExclusiveLock) {
       if (result.error) continue;
       counters.conversationsPersisted += 1;
       counters.messagesPersisted += result.messagesPersisted;
+      if (result.transcriptChanged) {
+        transcriptChanges.conversationsChanged += 1;
+        transcriptChanges.messagesAdded += result.messagesAdded;
+        transcriptChanges.messagesRemoved += result.messagesRemoved;
+      }
       if (result.isOrphan) counters.orphanConversations += 1;
       else if (leadId) eligibleConversations.push({ conversationId: raw.conversacion_id, leadId, messages });
     }
@@ -185,6 +190,12 @@ async function runPipeline(lock: ExclusiveLock) {
     });
     issues.push(...aiIssues);
     printAiStageSummary(aiStageReport);
+    if (transcriptChanges.conversationsChanged > 0) {
+      console.log(
+        `Stored transcripts reconciled with the source: ${transcriptChanges.conversationsChanged} conversation(s) changed, ` +
+          `${transcriptChanges.messagesAdded} message(s) added, ${transcriptChanges.messagesRemoved} stale message(s) removed.`
+      );
+    }
 
     // 8. hybrid operational priority scoring --------------------------------
     // Uses persisted/cached AI extractions only. It never invokes Gemini.
@@ -230,6 +241,7 @@ async function runPipeline(lock: ExclusiveLock) {
     // 11. finalize ------------------------------------------------------------
     await lock.assertHeld();
     await finalizePipelineRun(prisma, pipelineRun.id, "SUCCESS", counters, null, {
+      conversations: transcriptChanges,
       aiExtraction: aiStageReport,
       scoring: scoringReport,
       assignment: assignmentReport
@@ -266,7 +278,11 @@ function printAiStageSummary(report: AiStageReport) {
     successes: report.successes,
     validationFailures: report.validationFailures,
     providerFailures: report.providerFailures,
+    storeFailures: report.storeFailures,
     skippedNoApiKey: report.skippedNoApiKey,
+    skippedEmptyTranscript: report.skippedEmptyTranscript,
+    skippedDueToCancellation: report.skippedDueToCancellation,
+    evidenceExcerptsDropped: report.evidenceExcerptsDropped,
     skippedDueToLimit: report.skippedDueToLimit,
     skippedDueToQuota: report.skippedDueToQuota
   });

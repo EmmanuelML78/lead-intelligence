@@ -194,9 +194,15 @@ model Conversation {
   channel      String?
   startedAt    DateTime?
   isOrphan     Boolean   @default(false)
+  // SHA-256 of the canonical transcript of the messages currently stored
+  // (src/lib/ai/transcript.ts). An AiExtraction is current for this
+  // conversation only when its conversationHash equals this value. Null
+  // until the conversation is persisted by a pipeline that records it.
+  transcriptHash String?
   lead         Lead?     @relation(fields: [leadId], references: [id])
   messages     Message[]
   aiExtractions AiExtraction[]
+  snapshots    ConversationSnapshot[]
   createdAt    DateTime  @default(now())
 
   @@index([leadId])
@@ -208,6 +214,24 @@ model Conversation {
 // derived deterministically from conversationId + index + message content
 // (see src/pipeline/persist/fingerprint.ts#messageId). This keeps reruns
 // idempotent without inventing random ids.
+// Message rows are the current snapshot of a conversation: exactly what the
+// source contains now. When the source changes, rows that are no longer in it
+// are removed. Every distinct transcript ever seen is kept here in full, so
+// an AiExtraction made from an earlier transcript can still be traced to the
+// text it was made from (conversationId + transcriptHash = its
+// conversationHash). Rows are written once and never updated.
+model ConversationSnapshot {
+  id             String       @id @default(cuid())
+  conversationId String
+  transcriptHash String
+  messageCount   Int
+  messages       Json
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@unique([conversationId, transcriptHash])
+}
+
 model Message {
   id             String       @id
   conversationId String

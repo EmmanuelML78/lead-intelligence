@@ -19,12 +19,23 @@ export type LeadPersistResult = {
  *
  * Idempotency: if a Lead with this id already exists and its
  * sourceFingerprint is unchanged, we skip the write entirely ("already
- * ingested"). If it changed, we update the mutable fields and the caller
+ * ingested"), including the linked Customer and its updatedAt. If it changed,
+ * we update the mutable fields and the caller
  * records a SOURCE_RECORD_CHANGED issue.
  */
 export async function persistLead(db: PrismaClient, record: NormalizedLeadRecord): Promise<{ result: LeadPersistResult; issues: PipelineIssueInput[] }> {
   try {
     const outcome = await db.$transaction(async (tx) => {
+      const existing = await tx.lead.findUnique({
+        where: { id: record.id },
+        select: { sourceFingerprint: true, customerId: true }
+      });
+      // An unchanged source is a complete no-op, including shared profiles.
+      // Replaying an older lead must not overwrite a customer's newer data.
+      if (existing?.sourceFingerprint === record.sourceFingerprint) {
+        return { outcome: "unchanged" as const, customerId: existing.customerId };
+      }
+
       const dedupeKey = computeCustomerDedupeKey({
         normalizedPhone: record.normalizedPhone,
         normalizedEmail: record.normalizedEmail,
@@ -48,8 +59,6 @@ export async function persistLead(db: PrismaClient, record: NormalizedLeadRecord
           city: record.cityNormalized
         }
       });
-
-      const existing = await tx.lead.findUnique({ where: { id: record.id }, select: { sourceFingerprint: true } });
 
       const mutableData = {
         companyId: record.companyId,
@@ -81,10 +90,6 @@ export async function persistLead(db: PrismaClient, record: NormalizedLeadRecord
       if (!existing) {
         await tx.lead.create({ data: { id: record.id, ...mutableData } });
         return { outcome: "created" as const, customerId: customer.id };
-      }
-
-      if (existing.sourceFingerprint === record.sourceFingerprint) {
-        return { outcome: "unchanged" as const, customerId: customer.id };
       }
 
       await tx.lead.update({ where: { id: record.id }, data: mutableData });
