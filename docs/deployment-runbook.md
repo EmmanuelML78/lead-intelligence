@@ -499,6 +499,19 @@ Problems and decisions:
 
 **Status: both migrations were applied to production on 2026-11-24**, out of order with the merge. What happened and what was verified is in the incident record below.
 
+## Release notes for the conversation snapshot migration
+
+| Migration | Effect | Compatible with the code in production before the merge |
+| --- | --- | --- |
+| `20261125000000_conversation_transcript_snapshots` | Adds the nullable column `Conversation.transcriptHash` and the table `ConversationSnapshot`; fills the new column from the newest extraction of each conversation | Yes: additive, and the previous code reads neither |
+
+- **Order: migrate before merging.** The new code selects `Conversation.transcriptHash` in every score-reading query. Deployed against a database without the column, those pages fail and `/api/health` answers 503.
+- **Applying the migration changes nothing visible.** The backfill gives each conversation the hash of the extraction that was already being used. Verified on a populated database: 14 of 15 tables byte-identical, and in `Conversation` every pre-existing column identical.
+- **The first pipeline run after the deployment is where behavior changes.** It sets `transcriptHash` from the real messages, writes one snapshot per conversation, and removes message rows the source no longer contains. From then on an extraction made from a transcript that no longer exists stops being used: that lead shows no AI extraction and is scored with the neutral fallback until the conversation is analysed again.
+- **Take the backup before that first pipeline run**, not only before the migration: it is the step that deletes rows. Use `ops:fingerprint` before and after; `Message` and `Conversation` are expected to change, `AiExtraction` must not.
+- `ops:rescore` can be run before or after the pipeline. Before, it uses the backfilled hashes and reproduces the current scores.
+- Rollback of the schema, as a new migration: `DROP TABLE "ConversationSnapshot"; ALTER TABLE "Conversation" DROP COLUMN "transcriptHash";`. Rolling back only the code keeps both and is safe.
+
 ## Incident record: 2026-11-24
 
 Dashboard outage of approximately 29 minutes, caused by merging PR #3 before its migration was applied to production.

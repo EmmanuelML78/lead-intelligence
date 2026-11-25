@@ -77,6 +77,7 @@ The `pipeline` command is idempotent. Pipeline/data loading is an explicit setup
 | `AI_API_KEY` | optional | **not used** | Empty → AI stage `SKIPPED`; ingestion still succeeds. Do **not** put this on Vercel. |
 | `AI_MODEL` | optional | not used | Default `gemini-3.6-flash`. |
 | `AI_CONCURRENCY` | optional | not used | Default `4`. |
+| `AI_TIMEOUT_MS` | optional | not used | Time limit of one provider request, in milliseconds. Default `30000`. |
 | `AI_MAX_CONVERSATIONS` | optional | not used | Cap provider calls (e.g. `5` for a live smoke batch). |
 | `AI_PROVIDER` | unused (Gemini only) | not used | Documented name. |
 | `PIPELINE_SKIP_SCORING` | optional | not used | `1` skips scoring. |
