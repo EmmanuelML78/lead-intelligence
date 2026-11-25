@@ -53,10 +53,33 @@ test("integration: idempotent lead persistence, source-change detection, orphan 
     const { record } = buildLeadRecord(rawLead({ lead_id: leadId, empresa_id: companyId, punto_venta_id: salesPointId }), []);
     const first = await persistLead(prisma, record);
     assert.equal(first.result.outcome, "created");
+    assert.ok(first.result.customerId);
+    // A fixed old timestamp makes an otherwise invisible no-op UPDATE fail deterministically.
+    await prisma.customer.update({
+      where: { id: first.result.customerId },
+      data: { updatedAt: new Date("2000-01-01T00:00:00.000Z") }
+    });
+    const customerBefore = await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } });
+    const leadBefore = await prisma.lead.findUniqueOrThrow({ where: { id: leadId } });
 
     const rerun = await persistLead(prisma, record);
     assert.equal(rerun.result.outcome, "unchanged");
+    assert.equal(rerun.result.customerId, first.result.customerId);
+    assert.deepEqual(rerun.issues, []);
+    assert.deepEqual(await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } }), customerBefore);
+    assert.deepEqual(await prisma.lead.findUniqueOrThrow({ where: { id: leadId } }), leadBefore);
     assert.equal(await prisma.lead.count({ where: { id: leadId } }), 1);
+
+    // A nullable existing link must stay null; replay is not an implicit repair.
+    const unlinkedBefore = await prisma.lead.update({ where: { id: leadId }, data: { customerId: null } });
+    const unlinkedRerun = await persistLead(prisma, record);
+    assert.equal(unlinkedRerun.result.outcome, "unchanged");
+    assert.equal(unlinkedRerun.result.customerId, null);
+    assert.deepEqual(unlinkedRerun.issues, []);
+    assert.deepEqual(await prisma.lead.findUniqueOrThrow({ where: { id: leadId } }), unlinkedBefore);
+    assert.deepEqual(await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } }), customerBefore);
+    assert.equal(await prisma.customer.count({ where: { companyId } }), 1);
+    await prisma.lead.update({ where: { id: leadId }, data: { customerId: first.result.customerId } });
 
     // 10. source record changed -> detectable via issue -------------------
     const { record: changedRecord } = buildLeadRecord(
@@ -68,6 +91,10 @@ test("integration: idempotent lead persistence, source-change detection, orphan 
     assert.equal(changed.issues.length, 1);
     assert.equal(changed.issues[0]?.type, "SOURCE_RECORD_CHANGED");
     assert.equal(await prisma.lead.count({ where: { id: leadId } }), 1);
+    assert.equal(changed.result.customerId, first.result.customerId);
+    const customerChanged = await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } });
+    assert.equal(customerChanged.normalizedName, changedRecord.normalizedName);
+    assert.deepEqual(customerChanged.createdAt, customerBefore.createdAt);
 
     // 7. orphan conversation -> persisted and marked isOrphan --------------
     const { result: convResult, issues: convIssues } = await persistConversation(prisma, {
@@ -87,6 +114,51 @@ test("integration: idempotent lead persistence, source-change detection, orphan 
   } finally {
     await prisma.message.deleteMany({ where: { conversationId } });
     await prisma.conversation.deleteMany({ where: { id: conversationId } });
+    await prisma.lead.deleteMany({ where: { companyId } });
+    await prisma.customer.deleteMany({ where: { companyId } });
+    await prisma.salesPoint.deleteMany({ where: { id: salesPointId } });
+    await prisma.company.deleteMany({ where: { id: companyId } });
+  }
+});
+
+test("integration: unchanged source does not overwrite a shared customer updated by another lead", { skip, timeout: 60_000 }, async () => {
+  const suffix = randomUUID().slice(0, 8);
+  const companyId = `EMP-SHARED-${suffix}`;
+  const salesPointId = `PV-SHARED-${suffix}`;
+  const base = { empresa_id: companyId, punto_venta_id: salesPointId, nombre_cliente: "Shared Original" };
+  const { record: firstRecord } = buildLeadRecord(rawLead({ ...base, lead_id: `LD-SHARED-A-${suffix}` }), []);
+  const { record: secondRecord } = buildLeadRecord(rawLead({ ...base, lead_id: `LD-SHARED-B-${suffix}` }), []);
+  try {
+    await prisma.company.create({ data: { id: companyId } });
+    await prisma.salesPoint.create({ data: { id: salesPointId, companyId } });
+    const first = await persistLead(prisma, firstRecord);
+    const second = await persistLead(prisma, secondRecord);
+    assert.equal(first.result.outcome, "created");
+    assert.equal(second.result.outcome, "created");
+    assert.ok(first.result.customerId);
+    assert.equal(second.result.customerId, first.result.customerId);
+    const { record: changedRecord } = buildLeadRecord(rawLead({
+      ...base, lead_id: firstRecord.id, nombre_cliente: "Shared Updated", ciudad: "Medellin"
+    }), []);
+    const changed = await persistLead(prisma, changedRecord);
+    assert.equal(changed.result.outcome, "updated");
+    assert.equal(changed.issues[0]?.type, "SOURCE_RECORD_CHANGED");
+    assert.equal(changed.result.customerId, first.result.customerId);
+    await prisma.customer.update({ where: { id: first.result.customerId }, data: { updatedAt: new Date("2000-01-01T00:00:00.000Z") } });
+    const customerBefore = await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } });
+    const secondLeadBefore = await prisma.lead.findUniqueOrThrow({ where: { id: secondRecord.id } });
+    assert.equal(customerBefore.normalizedName, changedRecord.normalizedName);
+    assert.equal(customerBefore.city, changedRecord.cityNormalized);
+    for (const record of [secondRecord, changedRecord]) {
+      const repeated = await persistLead(prisma, record);
+      assert.equal(repeated.result.outcome, "unchanged");
+      assert.equal(repeated.result.customerId, first.result.customerId);
+      assert.deepEqual(repeated.issues, []);
+      assert.deepEqual(await prisma.customer.findUniqueOrThrow({ where: { id: first.result.customerId } }), customerBefore);
+    }
+    assert.deepEqual(await prisma.lead.findUniqueOrThrow({ where: { id: secondRecord.id } }), secondLeadBefore);
+    assert.equal(await prisma.customer.count({ where: { companyId } }), 1);
+  } finally {
     await prisma.lead.deleteMany({ where: { companyId } });
     await prisma.customer.deleteMany({ where: { companyId } });
     await prisma.salesPoint.deleteMany({ where: { id: salesPointId } });

@@ -47,6 +47,7 @@ Customer identity is deterministic, never fuzzy, and always scoped by `companyId
 `Lead.id` is the raw `lead_id` from the source (a natural key, not a generated id), so persistence is a plain upsert by id. `sourceFingerprint` is a SHA-256 hash of the canonically key-sorted raw row (`src/pipeline/persist/fingerprint.ts`), stable across reruns regardless of column order.
 
 - Same `lead_id` seen again with the **same** fingerprint → treated as already ingested, no write.
+- This no-op check happens before resolving/upserting `Customer`: its complete row (including `updatedAt`) and the existing customer link remain unchanged. Replaying an unchanged lead cannot overwrite a shared profile updated by another changed lead. New or changed source rows still use the existing transactional customer-deduplication path.
 - Same `lead_id` seen again with a **different** fingerprint → mutable fields are updated and a `SOURCE_RECORD_CHANGED` issue is recorded.
 - Same `lead_id` appearing more than once **within one source file** (e.g. `LD-00011`, `LD-00251`) → the first occurrence is canonical; every later occurrence is reported as a `DUPLICATE_LEAD_ID` issue and is not persisted separately.
 
