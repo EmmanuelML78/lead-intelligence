@@ -1,4 +1,5 @@
 import { prisma } from "../src/lib/db/client";
+import { reportLockError, withWriterLock } from "../src/lib/db/exclusive-lock";
 import { assignmentClockFromEnv, formatBusinessDate, resolveBusinessDate } from "../src/lib/assignment/business-date";
 import { runAssignmentStage } from "../src/pipeline/assignment-stage";
 
@@ -54,8 +55,11 @@ async function main() {
   console.log(JSON.stringify(output, null, 2));
 }
 
-main()
+// The assignment stage persists assignments, so this command excludes the
+// pipeline and every other writer while it runs.
+withWriterLock("analysis-assignment", main)
   .catch((error) => {
+    if (reportLockError(error)) return;
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })

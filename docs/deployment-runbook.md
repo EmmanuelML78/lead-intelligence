@@ -248,7 +248,9 @@ Approval for one step is not approval for the next. A step that was skipped is r
 - Announce that nobody runs the pipeline or merges until the deployment is finished.
 - In a production window: `Step { bun run ops:db-status --expect-host $ExpectHost }`. `Pipeline runs currently RUNNING` must be 0. A `RUNNING` row that never finishes is a crashed run: stop and decide what it is before continuing.
 
-Nothing technical prevents two pipeline runs at once. The freeze is a procedural control, and `ops:rescore` refuses to start while a run is `RUNNING`.
+Writers exclude each other technically: `bun run pipeline`, `ops:rescore --apply`, `analysis:priority` and `analysis:assignment` take the same exclusive lock, and a second one exits with code 75 naming the operation that is running. The lock needs a direct connection, which this runbook already uses. If `DIRECT_URL` is set in your environment it must name the same database as the window's `DATABASE_URL`; the command checks this and refuses otherwise, so remove a leftover value with `Remove-Item Env:DIRECT_URL`. The freeze is still required: the lock does not cover `prisma migrate deploy` or a merge.
+
+A `RUNNING` row with no live process is the leftover of an interrupted run. The next pipeline run closes it as `FAILED` by itself.
 
 ### 2. Establish what is really pending
 
@@ -331,7 +333,7 @@ Step { bun run ops:fingerprint compare production-before.json --expect-host $Exp
 Then check that production, still running the previous code, is healthy:
 
 ```powershell
-(Invoke-WebRequest https://lead-intelligence-iota.vercel.app/api/health).Content   # {"status":"ok","database":"reachable"}
+(Invoke-WebRequest https://lead-intelligence-iota.vercel.app/api/health).Content   # {"status":"ok","database":"reachable","schema":"compatible"}
 ```
 
 and open `/leads` in a browser: it must not show "Panel no disponible".
@@ -389,7 +391,7 @@ Roll back the smallest thing that fixes the problem, in this order.
 
 ### Code that needs a migration was deployed before the migration
 
-Symptom: `/api/health` returns 200 and reports the database as reachable, but pages show "Panel no disponible". The Vercel deployment is marked successful. This is what happened on 2026-11-24.
+Symptom: pages show "Panel no disponible" while the Vercel deployment is marked successful. `/api/health` answers 503 with `"schema":"incompatible"`; `Invoke-WebRequest` reports that as an error, which is the signal. This is what happened on 2026-11-24, when the health endpoint only checked reachability and still answered 200.
 
 First confirm the cause in a [read-only session](#first-look-at-production-read-only): `ops:db-status` lists the migration under `Pending`.
 
@@ -568,5 +570,8 @@ Verified afterwards:
 
 - Protect `main` as recommended above.
 - Confirm which Vercel environments use `DATABASE_URL`.
-- `/api/health` does not detect a schema that is behind the code. A check that fails when migrations are pending would have made this visible on the deployment itself.
-- Nothing prevents two pipeline runs from overlapping.
+
+Resolved since:
+
+- `/api/health` now answers 503 when the database lacks a migration or an object the deployed code needs, and a regression test reproduces this incident. It reports the problem; it does not prevent the wrong order.
+- Overlapping writers are refused by an exclusive database lock.

@@ -48,6 +48,23 @@ export async function createPipelineRun(db: PrismaClient) {
   return db.pipelineRun.create({ data: { status: "RUNNING" } });
 }
 
+export const INTERRUPTED_RUN_REASON =
+  "Interrupted: the process ended before the run was finalized.";
+
+/**
+ * Closes runs left in RUNNING by a process that died before finalizing.
+ *
+ * Call it only while holding the pipeline's exclusive lock: under the lock
+ * no other run can be in progress, so every RUNNING row is a leftover.
+ */
+export async function failInterruptedRuns(db: PrismaClient): Promise<number> {
+  const result = await db.pipelineRun.updateMany({
+    where: { status: "RUNNING" },
+    data: { status: "FAILED", finishedAt: new Date(), failureReason: INTERRUPTED_RUN_REASON }
+  });
+  return result.count;
+}
+
 export async function finalizePipelineRun(
   db: PrismaClient,
   id: string,
@@ -56,8 +73,11 @@ export async function finalizePipelineRun(
   failureReason?: string | null,
   metadata?: Record<string, unknown> | null
 ) {
-  return db.pipelineRun.update({
-    where: { id },
+  // Only a run that is still RUNNING can be finalized. If another process
+  // already closed it as interrupted, two runs overlapped: saying so is
+  // better than silently turning that row into a success.
+  const result = await db.pipelineRun.updateMany({
+    where: { id, status: "RUNNING" },
     data: {
       status,
       finishedAt: new Date(),
@@ -66,4 +86,15 @@ export async function finalizePipelineRun(
       ...counters
     }
   });
+  if (result.count === 0) throw new PipelineRunAlreadyClosedError(id);
+}
+
+export class PipelineRunAlreadyClosedError extends Error {
+  constructor(id: string) {
+    super(
+      `Pipeline run ${id} was already closed by another process before it could be finalized. ` +
+        "Two runs overlapped; check the data and run the pipeline again."
+    );
+    this.name = "PipelineRunAlreadyClosedError";
+  }
 }

@@ -160,6 +160,68 @@ jobs:
             exit 1
           fi
 
+      # Real, independent processes against PostgreSQL: while one pipeline
+      # holds the exclusive lock every other writer must be refused, and a
+      # run killed half way must not block or corrupt the next one.
+      - name: Refuse concurrent writers and recover from a killed run
+        env:
+          DATABASE_URL: ${{ env.PIPELINE_DATABASE_URL }}
+        run: |
+          wait_for_lock() {
+            for attempt in $(seq 1 240); do
+              if grep -q "Exclusive lock acquired" "$1" 2>/dev/null; then return 0; fi
+              sleep 0.25
+            done
+            echo "::error::The pipeline never reported acquiring the exclusive lock."
+            cat "$1"
+            return 1
+          }
+
+          bun src/pipeline/run.ts > "$RUNNER_TEMP/holder.log" 2>&1 &
+          holder_pid=$!
+          wait_for_lock "$RUNNER_TEMP/holder.log"
+
+          refusals=0
+          while IFS= read -r writer; do
+            if ! kill -0 "$holder_pid" 2>/dev/null; then
+              echo "The pipeline finished before '$writer' could be tried; skipping it."
+              continue
+            fi
+            status=0
+            $writer > "$RUNNER_TEMP/refused.log" 2>&1 < /dev/null || status=$?
+            if kill -0 "$holder_pid" 2>/dev/null; then
+              if [ "$status" -ne 75 ]; then
+                echo "::error::'$writer' exited with $status instead of 75 while the pipeline was running."
+                cat "$RUNNER_TEMP/refused.log"
+                exit 1
+              fi
+              grep "Cannot start" "$RUNNER_TEMP/refused.log"
+              refusals=$((refusals + 1))
+            fi
+          done <<'WRITERS'
+          bun run ops:rescore --expect-host localhost --decision-at 2026-09-14T20:00:00.000Z --apply
+          bun run pipeline
+          bun run analysis:priority
+          bun run analysis:assignment
+          WRITERS
+          wait "$holder_pid"
+          if [ "$refusals" -lt 1 ]; then
+            echo "::error::No concurrent writer was refused."
+            exit 1
+          fi
+          echo "Writers refused while the pipeline was running: $refusals"
+
+          bun src/pipeline/run.ts > "$RUNNER_TEMP/killed.log" 2>&1 &
+          killed_pid=$!
+          wait_for_lock "$RUNNER_TEMP/killed.log"
+          sleep 2
+          kill -9 "$killed_pid"
+          wait "$killed_pid" || true
+
+          bun run pipeline | tee "$RUNNER_TEMP/recovered.log"
+          grep -q "Marked 1 earlier run(s) left in RUNNING as FAILED" "$RUNNER_TEMP/recovered.log"
+          bun run verify:counts
+
       - name: Check company isolation in the data-access layer
         env:
           DATABASE_URL: ${{ env.PIPELINE_DATABASE_URL }}

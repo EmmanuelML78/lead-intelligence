@@ -1,4 +1,5 @@
 import { prisma } from "../src/lib/db/client";
+import { reportLockError, withWriterLock } from "../src/lib/db/exclusive-lock";
 import {
   analyzeScoreDistribution,
   selectSanitySamples
@@ -22,8 +23,11 @@ async function main() {
   console.log(JSON.stringify(output, null, 2));
 }
 
-main()
+// The scoring stage persists scores, so this command excludes the pipeline
+// and every other writer while it runs.
+withWriterLock("analysis-priority", main)
   .catch((error) => {
+    if (reportLockError(error)) return;
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })

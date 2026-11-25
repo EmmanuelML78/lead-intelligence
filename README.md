@@ -71,6 +71,7 @@ The `pipeline` command is idempotent. Pipeline/data loading is an explicit setup
 | Variable | Pipeline | Dashboard runtime | Notes |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | required | required | Server-only. Pooled URL is fine on Vercel; use a **direct** URL for `db:migrate:deploy`. |
+| `DIRECT_URL` | optional | not used | Direct (non-pooled) connection for the pipeline's exclusive lock. Needed only when `DATABASE_URL` is pooled; the lock refuses a pooled connection. Must be the **same database** as `DATABASE_URL`: the command checks and refuses otherwise. |
 | `ASSIGNMENT_BUSINESS_DATE` | required for a stable demo | required for a stable demo | Pin `2026-09-14`. |
 | `BUSINESS_TIMEZONE` | optional | optional | Default `America/Bogota`. |
 | `AI_API_KEY` | optional | **not used** | Empty → AI stage `SKIPPED`; ingestion still succeeds. Do **not** put this on Vercel. |
@@ -118,7 +119,9 @@ Configure on Vercel (Production):
 
 Do **not** set `AI_API_KEY` on Vercel. The dashboard only reads Postgres. Gemini stays an offline pipeline step.
 
-Health: `GET /api/health` → `{ "status": "ok", "database": "reachable" }` (or 503). No secrets, versions, or counts.
+Health: `GET /api/health` → `{ "status": "ok", "database": "reachable", "schema": "compatible" }`, or 503 when the database is unreachable or lacks migrations or objects the deployed code needs. No secrets, versions, names, or counts.
+
+Only one writer at a time: `bun run pipeline`, `ops:rescore --apply`, `analysis:priority` and `analysis:assignment` take the same exclusive lock. A second one exits with code 75 and says which operation is running. See `docs/architecture.md` ("Operational reliability").
 
 Migrations: `bun run db:migrate:deploy` (`prisma migrate deploy`). Never `prisma db push` in production. Follow [docs/deployment-runbook.md](docs/deployment-runbook.md) for any release that includes a migration: backup, rehearsal on a copy, order of migration and merge, score recalculation and rollback.
 
